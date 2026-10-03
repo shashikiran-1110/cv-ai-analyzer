@@ -13,7 +13,7 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload      # http://127.0.0.1:8000
 ```
 
-Optional AI-written advice: `export ANTHROPIC_API_KEY=...` (model via `CLAUDE_MODEL`). Without a key the app uses its built-in local analysis. Scores are always computed locally and deterministically; the key only affects the written advice, and the UI asks before sending resume text to the API.
+Optional AI-written advice: `export OPENAI_API_KEY=...` (model via `OPENAI_MODEL`, default `gpt-5.6-luna`), or `ANTHROPIC_API_KEY` / `CLAUDE_MODEL` instead. `AI_PROVIDER` forces one when both are set. Without a key the app uses its built-in local analysis. Scores are always computed locally and deterministically; the key only affects the written advice, and the UI asks before sending resume text to the API.
 
 ## How it works
 
@@ -23,7 +23,7 @@ Optional AI-written advice: `export ANTHROPIC_API_KEY=...` (model via `CLAUDE_MO
 | PDF text + experience-years extraction | `app/resume.py` |
 | Skill taxonomy (~250 skills, whole-word matching) | `app/skills.py` |
 | Scoring & aggregation | `app/matcher.py` |
-| Local + Claude insights (falls back on any failure) | `app/insights.py` |
+| Local + OpenAI/Claude insights (falls back on any failure) | `app/insights.py` |
 | API + static UI | `app/main.py`, `app/static/` |
 
 ## Notes & limits

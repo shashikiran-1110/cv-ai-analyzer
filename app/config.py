@@ -8,7 +8,23 @@ MAX_STORED_SEARCHES = 50
 DEFAULT_THRESHOLD = 60
 
 CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-5-5")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.6-luna")
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+
+
+def ai_provider() -> str | None:
+    """'openai' | 'anthropic' | None. AI_PROVIDER forces a choice; otherwise OpenAI wins if both keys are set."""
+    forced = os.getenv("AI_PROVIDER", "").lower()
+    if forced == "openai" and os.getenv("OPENAI_API_KEY"):
+        return "openai"
+    if forced == "anthropic" and os.getenv("ANTHROPIC_API_KEY"):
+        return "anthropic"
+    if os.getenv("OPENAI_API_KEY"):
+        return "openai"
+    if os.getenv("ANTHROPIC_API_KEY"):
+        return "anthropic"
+    return None
 
 
 def ai_available() -> bool:
-    return bool(os.getenv("ANTHROPIC_API_KEY"))
+    return ai_provider() is not None

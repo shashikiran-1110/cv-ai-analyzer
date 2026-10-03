@@ -91,7 +91,7 @@ async def test_ai_failure_falls_back(client, resume_pdf, monkeypatch):
     async def boom(*a, **k):
         raise RuntimeError("down")
 
-    monkeypatch.setattr("app.insights.claude_insights", boom)
+    monkeypatch.setattr("app.insights.llm_insights", boom)
     async with client as c:
         assert (await c.get("/api/config")).json()["ai_available"] is True
         sid = (await c.post("/api/search", json={"title": "data engineer", "count": 2})).json()["search_id"]
@@ -106,3 +106,30 @@ async def test_ai_failure_falls_back(client, resume_pdf, monkeypatch):
 async def test_claude_json_parsing():
     from app.insights import _extract_json
     assert _extract_json('Here you go:\n```json\n{"a": 1}\n```')["a"] == 1
+
+
+async def test_openai_provider(client, resume_pdf, monkeypatch):
+    import httpx
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    assert main.config.ai_provider() == "openai"
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["auth"] = request.headers["authorization"]
+        seen["body"] = json.loads(request.content)
+        out = {"summary": "Solid fit.", "strengths": ["Python"], "improvements": ["Add metrics"],
+               "skills_to_learn": [{"skill": "Kubernetes", "why": "w", "how": "h"}]}
+        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(out)}}]})
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr("app.insights.httpx.AsyncClient",
+                        lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    async with client as c:
+        sid = (await c.post("/api/search", json={"title": "data engineer", "count": 2})).json()["search_id"]
+        await wait_done(c, sid)
+        r = await c.post("/api/analyze", data={"search_id": sid, "use_ai": "true"},
+                         files={"resume": ("cv.pdf", resume_pdf, "application/pdf")})
+    ins = r.json()["insights"]
+    assert ins["source"] == "openai" and ins["summary"] == "Solid fit."
+    assert seen["auth"] == "Bearer sk-test" and seen["body"]["model"] == "gpt-5.6-luna"
+    assert ins["skills_to_learn"][0]["jobs"] == 2     # joined with local gap counts

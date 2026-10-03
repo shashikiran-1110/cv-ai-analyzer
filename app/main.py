@@ -58,7 +58,7 @@ async def _run_search(sid: str, req: SearchRequest, hours: Optional[int]) -> Non
 
 @app.get("/api/config")
 async def get_config():
-    return {"ai_available": config.ai_available(), "max_jobs": config.MAX_JOBS,
+    return {"ai_available": config.ai_available(), "ai_provider": config.ai_provider(), "max_jobs": config.MAX_JOBS,
             "default_threshold": config.DEFAULT_THRESHOLD}
 
 

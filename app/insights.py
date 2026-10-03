@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+
+import httpx
 
 from . import config
 
@@ -81,9 +84,27 @@ def _extract_json(text: str) -> dict:
     return json.loads(m.group(0))
 
 
-async def claude_insights(resume_text: str, agg: dict, results: list[dict], search: dict) -> dict:
+async def _complete(prompt: str) -> tuple[str, str]:
+    """Run the prompt on the configured provider. Returns (text, source_name)."""
+    if config.ai_provider() == "openai":
+        async with httpx.AsyncClient(timeout=90) as c:
+            r = await c.post(
+                f"{config.OPENAI_BASE_URL}/chat/completions",
+                headers={"Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}"},
+                json={"model": config.OPENAI_MODEL, "messages": [{"role": "user", "content": prompt}],
+                      "response_format": {"type": "json_object"}},
+            )
+            r.raise_for_status()
+            return r.json()["choices"][0]["message"]["content"], "openai"
     from anthropic import AsyncAnthropic
 
+    msg = await AsyncAnthropic().messages.create(
+        model=config.CLAUDE_MODEL, max_tokens=2000, messages=[{"role": "user", "content": prompt}], timeout=60,
+    )
+    return "".join(b.text for b in msg.content if b.type == "text"), "claude"
+
+
+async def llm_insights(resume_text: str, agg: dict, results: list[dict], search: dict) -> dict:
     top = sorted(results, key=lambda r: -r["score"])
     analysis = {
         "average_score": agg["avg_score"], "qualifying_jobs": agg["qualifying"],
@@ -98,13 +119,10 @@ async def claude_insights(resume_text: str, agg: dict, results: list[dict], sear
         n=agg["job_count"], title=search.get("title", ""), location=search.get("location", ""),
         resume=resume_text[:12000], analysis=json.dumps(analysis, indent=1),
     )
-    client = AsyncAnthropic()
-    msg = await client.messages.create(
-        model=config.CLAUDE_MODEL, max_tokens=2000, messages=[{"role": "user", "content": prompt}], timeout=60,
-    )
-    data = _extract_json("".join(b.text for b in msg.content if b.type == "text"))
+    text, source = await _complete(prompt)
+    data = _extract_json(text)
     return {
-        "source": "claude",
+        "source": source,
         "summary": str(data.get("summary", "")),
         "strengths": [str(x) for x in data.get("strengths", [])][:8],
         "improvements": [str(x) for x in data.get("improvements", [])][:8],
@@ -121,10 +139,10 @@ async def build_insights(resume_text: str, agg: dict, results: list[dict], searc
     if not (use_ai and config.ai_available()):
         return base
     try:
-        out = await claude_insights(resume_text, agg, results, search)
+        out = await llm_insights(resume_text, agg, results, search)
         if out["strengths"] and out["improvements"]:
             return out
     except Exception as e:  # network, auth, bad JSON — never fail the whole analysis
-        log.warning("Claude insights failed: %s", type(e).__name__)
+        log.warning("AI insights failed: %s", type(e).__name__)
         base["ai_error"] = "AI insights were unavailable, showing built-in analysis instead."
     return base

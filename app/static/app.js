@@ -206,7 +206,7 @@ function renderReport() {
   $("aiNotice").textContent = ins.ai_error || "";
   const sum = $("summaryBox");
   show(sum, !!ins.summary);
-  sum.replaceChildren(h("b", {}, "Overall: "), ins.summary || "", ins.source === "claude" ? h("div", { class: "fine" }, "Advice written by Claude from your resume and the posting analysis.") : null);
+  sum.replaceChildren(h("b", {}, "Overall: "), ins.summary || "", ins.source !== "local" ? h("div", { class: "fine" }, "Advice written by AI from your resume and the posting analysis.") : null);
 
   const bullets = (el, items, empty) => { clear(el); (items.length ? items : [empty]).forEach((t) => el.append(h("li", {}, t))); };
   bullets($("strengths"), ins.strengths, "Nothing stands out yet.");
@@ -304,6 +304,7 @@ $("exportCsv").addEventListener("click", () => {
   try {
     state.cfg = await api("/api/config");
     show($("aiRow"), !!state.cfg.ai_available);
+    if (state.cfg.ai_provider) $("aiName").textContent = state.cfg.ai_provider === "openai" ? "OpenAI" : "Anthropic";
     if (state.cfg.default_threshold) { $("threshold").value = state.cfg.default_threshold; $("thrVal").textContent = state.cfg.default_threshold; }
   } catch { /* UI still works; server errors surface on use */ }
   goto(1);
