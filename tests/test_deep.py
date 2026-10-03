@@ -72,6 +72,8 @@ async def test_deep_endpoint_judges_the_engines_requirements(client, resume_pdf,
         body = json.loads(request.content)
         prompt = body["messages"][1]["content"]
         seen["prompt"] = prompt
+        seen["system"] = body["messages"][0]["content"]
+        seen["format"] = body.get("response_format")
         ids = [l.split("]")[0].split("[")[1] for l in prompt.splitlines() if l.startswith("- [r")]
         seen["ids"] = ids
         answer = {"verdict": "strong", "summary": "Good fit.", "assessments": [
@@ -96,6 +98,8 @@ async def test_deep_endpoint_judges_the_engines_requirements(client, resume_pdf,
         assert r.status_code == 200, r.text
         d = r.json()["deep"]
     assert seen["ids"] == [q["id"] for q in job["requirements"]]                       # D11: same list
+    assert seen["format"]["type"] == "json_schema" and seen["format"]["json_schema"]["strict"] is True
+    assert "<resume>" in seen["system"] and "<resume>" not in seen["prompt"]          # resume is the cached prefix
     assert all(q["text"] in seen["prompt"] for q in job["requirements"])
     rows = d["requirements"]
     assert rows[0]["verified"] and rows[0]["source"] == "ai" and rows[0]["evidence"].startswith("Data engineer")
@@ -111,9 +115,11 @@ async def test_deep_survives_rescore_and_open_mode(client, resume_pdf, monkeypat
         prompt = json.loads(request.content)["messages"][1]["content"]
         if "- [r" in prompt:
             ids = [l.split("]")[0].split("[")[1] for l in prompt.splitlines() if l.startswith("- [r")]
-            ans = {"assessments": [{"id": i, "status": "missing", "evidence": "", "note": ""} for i in ids]}
+            ans = {"verdict": "stretch", "summary": "s",
+                   "assessments": [{"id": i, "status": "missing", "evidence": "", "note": ""} for i in ids]}
         else:
-            ans = {"assessments": [{"requirement": "Python", "importance": "must", "status": "met",
+            ans = {"verdict": "possible", "summary": "s",
+                   "assessments": [{"requirement": "Python", "importance": "must", "status": "met",
                                     "evidence": "Built ETL pipelines in Python and SQL on AWS", "note": ""}]}
         return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(ans)}}]})
 
@@ -140,4 +146,4 @@ async def test_deep_endpoint_bad_json(client, resume_pdf, monkeypatch):  # noqa:
     async with client as c:
         a = await _analyzed(c, resume_pdf)
         r = await c.post(f"/api/analysis/{a['analysis_id']}/deep/{a['jobs'][0]['id']}", headers=HDR)
-    assert r.status_code == 502 and "unreadable" in r.json()["detail"]
+    assert r.status_code == 502 and "wrong format" in r.json()["detail"]      # after one repair attempt

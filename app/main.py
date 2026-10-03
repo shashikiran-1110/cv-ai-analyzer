@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 import httpx
 
 from . import assistant, config, deepmatch, insights, linkedin, llm, matcher, resume, skills
+from .ai import gateway
 from . import sources as src
 from .sources import aggregate
 from .sources.sample import sample_jobs
@@ -569,7 +570,9 @@ async def _insights_run(run_id: str, aid: str, cfg: llm.LLMConfig) -> None:
     await bus.publish(run_id, "insight.started", {})
     try:
         res = a["result"]
-        ins = await insights.build_insights(a["resume_text"], res["summary"], res["jobs"], a["query"], cfg)
+        ins = await insights.build_insights(a["resume_text"], res["summary"], res["jobs"], a["query"], cfg,
+                                            gateway.Call(agent="insight_narrator", owner=a.get("owner", ""),
+                                                         analysis_id=aid, run_id=run_id))
         res["insights"] = ins
         res["insights_run_id"] = None
         await run_in_threadpool(_persist_analysis, aid, a)
@@ -607,6 +610,29 @@ async def run_events(run_id: str, request: Request):
             yield f"id: {e['seq']}\nevent: {e['type']}\ndata: {json.dumps(e['data'])}\n\n"
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.get("/api/analysis/{aid}/costs")
+async def analysis_costs(aid: str):
+    _analysis(aid)
+    return await run_in_threadpool(db.llm_spend, "", aid)
+
+
+@app.get("/api/analysis/{aid}/deep-estimate")
+async def deep_estimate(aid: str, request: Request, n: int = 10):
+    """Pre-flight cost estimate before 'Verify top N' (ROADMAP §8.2 budgets)."""
+    a = _analysis(aid)
+    cfg = llm.resolve(request.headers)
+    if not cfg:
+        return {"estimate_usd": None, "calls": 0, "message": "Add an AI key first."}
+    jobs = sorted(a["result"]["jobs"], key=lambda r: -r["score"])
+    todo = [j for j in jobs if not j.get("deep")][: max(1, min(n, 60))]
+    full = {j["id"]: j for j in a["jobs_full"]}
+    chars = sum(len((full.get(j["id"]) or {}).get("description") or "")[:7000] + 1500 for j in todo) // max(1, len(todo))
+    resume_chars = min(len(a["resume_text"]), 12000)
+    est = gateway.estimate_cost(cfg, "standard", chars + resume_chars, 900, len(todo), cached_chars=resume_chars)
+    return {"estimate_usd": est, "calls": len(todo), "model": gateway.model_for(cfg, "standard"),
+            "message": "" if est is not None else "No price on file for this model (set LLM_PRICES to enable estimates)."}
 
 
 @app.get("/api/me/export")
@@ -647,10 +673,13 @@ def _sse(obj: dict | None = None, event: str | None = None, raw: str | None = No
     return f"{head}data: {raw if raw is not None else json.dumps(obj)}\n\n"
 
 
-async def _stream_response(cfg: llm.LLMConfig, system: str, messages: list[dict]) -> StreamingResponse:
+async def _stream_response(cfg: llm.LLMConfig, system: str, messages: list[dict], call: Optional[gateway.Call] = None,
+                           cacheable: str = "", volatile: str = "") -> StreamingResponse:
+    call = call or gateway.Call(agent="chat")
+
     async def gen() -> AsyncIterator[str]:
         try:
-            async for piece in llm.stream(cfg, system, messages):
+            async for piece in gateway.stream(cfg, call, system, messages, cacheable=cacheable, volatile=volatile):
                 yield _sse({"t": piece})
             yield _sse(raw="[DONE]")
         except llm.LLMError as e:
@@ -678,7 +707,9 @@ async def chat(aid: str, body: ChatRequest, request: Request):
     while msgs and msgs[0]["role"] != "user":
         msgs.pop(0)
     job = _job(a, body.job_id) if body.job_id else None
-    return await _stream_response(cfg, assistant.system_for(_full_ctx(a), job, a["extra"]), msgs)
+    system, cacheable, volatile = assistant.prompt_parts(_full_ctx(a), job, a["extra"])
+    return await _stream_response(cfg, system, msgs, gateway.Call(agent="career_coach", owner=owner(request), analysis_id=aid),
+                                  cacheable, volatile)
 
 
 @app.post("/api/analysis/{aid}/tool")
@@ -688,8 +719,10 @@ async def tool(aid: str, body: ToolRequest, request: Request):
     ratelimit.check(request, "ai")
     job = _job(a, body.job_id)
     prompt = assistant.TOOLS[body.kind]
-    return await _stream_response(cfg, assistant.system_for(_full_ctx(a), job, a["extra"]),
-                                  [{"role": "user", "content": prompt}])
+    system, cacheable, volatile = assistant.prompt_parts(_full_ctx(a), job, a["extra"])
+    return await _stream_response(cfg, system, [{"role": "user", "content": prompt}],
+                                  gateway.Call(agent=f"tool_{body.kind}", owner=owner(request), analysis_id=aid),
+                                  cacheable, volatile)
 
 
 @app.post("/api/analysis/{aid}/deep/{job_id}")
@@ -705,7 +738,8 @@ async def deep_check(aid: str, job_id: str, request: Request):
     if scored is None:
         raise HTTPException(404, "Job not found in this analysis.")
     base = {**scored, "score": scored.get("score_det", scored["score"])}
-    a["deep"][job_id] = await deepmatch.assess(cfg, job, base, a["resume_text"])
+    a["deep"][job_id] = await deepmatch.assess(cfg, job, base, a["resume_text"],
+                                               gateway.Call(agent="deep_verifier", owner=owner(request), analysis_id=aid))
     computed = await run_in_threadpool(_compute, a, a["extra"], a["result"]["summary"]["threshold"])
     a["result"].update(computed)
     await run_in_threadpool(_persist_analysis, aid, a)

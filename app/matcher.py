@@ -141,11 +141,19 @@ _CUE = re.compile(r"\b(experience|proficien|knowledge|familiar|degree|must|requi
 _BULLET = re.compile(r"^\s*(?:[•\-*·▪►◦–]|\d{1,2}[.)])\s*")
 
 
+_SENT_SPLIT = re.compile(r"(?<=[.!?;])\s+(?=[A-Z0-9•(])")
+
+
 def requirement_lines(description: str) -> list[tuple[str, bool]]:
-    """Extract (line, is_preferred) requirement statements, section-aware."""
+    """Extract (line, is_preferred) requirement statements, section-aware.
+
+    v2 (eval-driven): short bullets that name a skill or a meaningful term are kept (F1); a prose paragraph after
+    the bullets of a Requirements section ends that section (F2); postings without headings/bullets are split into
+    sentences and the requirement-like sentences kept (F3)."""
     lines = [l.strip() for l in description.splitlines() if l.strip()]
     section: Optional[str] = None
     found_req = False
+    bullets_in_section = 0
     out: list[tuple[str, bool]] = []
     loose: list[tuple[str, bool]] = []
     for raw in lines:
@@ -153,21 +161,26 @@ def requirement_lines(description: str) -> list[tuple[str, bool]]:
         text = _BULLET.sub("", raw).strip()
         is_heading = not is_bullet and len(text) <= 70 and (text.endswith(":") or len(text.split()) <= 7)
         if is_heading:
-            if _H_PREF.search(text):
-                section = "pref"
+            new = ("pref" if _H_PREF.search(text) else "skip" if _H_SKIP.search(text) else
+                   "req" if _H_REQ.search(text) else None)
+            if new:
+                section, bullets_in_section = new, 0
+                found_req = found_req or new == "req"
                 continue
-            if _H_SKIP.search(text):
-                section = "skip"
-                continue
-            if _H_REQ.search(text):
-                section, found_req = "req", True
-                continue
-        if not (15 <= len(text) <= 320):
-            continue
         if section in ("req", "pref"):
+            if (not is_bullet and bullets_in_section and (len(text) > 100 or ". " in text)
+                    and not _CUE.search(text) and not sk.extract_skills(text)):
+                section = None                       # F2: prose after the bullets is not a requirement
+                continue
+            if not (2 <= len(text) <= 320) or (len(text) < 15 and not (sk.extract_skills(text) or _content_terms(text))):
+                continue                             # F1: "Python", "SQL", "AWS and Docker" are real requirements
+            bullets_in_section += is_bullet
             out.append((text, section == "pref"))
-        elif section != "skip" and (is_bullet or _CUE.search(text)) and _CUE.search(text):
-            loose.append((text, bool(_H_PREF.search(text))))
+        elif section != "skip":
+            for part in (_SENT_SPLIT.split(text) if len(text) > 160 else [text]):     # F3
+                part = part.strip()
+                if 15 <= len(part) <= 320 and (is_bullet or _CUE.search(part)) and _CUE.search(part):
+                    loose.append((part.rstrip("."), bool(_H_PREF.search(part))))
     if not found_req and not any(p for _, p in out):
         out = loose + out
     return out[:25]

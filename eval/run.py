@@ -29,7 +29,7 @@ HEADLINE = {
     "skills.f1": ("+", 0.01), "skills.trap_pass_rate": ("+", 0.0), "skills.negation_accuracy": ("+", 0.0),
     "experience.mae_months": ("-", 0.5), "experience.within_1_month": ("+", 0.0),
     "education.accuracy": ("+", 0.0), "location.accuracy": ("+", 0.0),
-    "requirements.f1": ("+", 0.01), "fairness.identical_rate": ("+", 0.0),
+    "requirements.f1": ("+", 0.01), "requirements.holdout_f1": ("+", 0.01), "fairness.identical_rate": ("+", 0.0),
 }
 
 
@@ -92,8 +92,11 @@ def suite_location() -> dict:
 
 
 def suite_requirements() -> dict:
-    """Line-level extractor P/R/F1: a predicted line matches a gold line if token Jaccard ≥ 0.6."""
-    tp = fp = fn = 0
+    """Line-level extractor P/R/F1: a predicted line matches a gold line if token Jaccard ≥ 0.6.
+
+    Cases marked "split": "holdout" were written after the v2 extractor and never used to tune it; report them
+    separately (the dev number is optimistic by construction)."""
+    counts = {"dev": [0, 0, 0], "holdout": [0, 0, 0]}
     fails = []
     for c in _load("requirements.jsonl"):
         pred = [t for t, _ in matcher.requirement_lines(c["description"])]
@@ -104,14 +107,17 @@ def suite_requirements() -> dict:
             if j is not None:
                 matched_gold.add(j)
                 matched_pred.add(i)
-        tp += len(matched_gold)
-        fp += len(pred) - len(matched_pred)
-        fn += len(gold) - len(matched_gold)
+        k = counts[c.get("split", "dev")]
+        k[0] += len(matched_gold)
+        k[1] += len(pred) - len(matched_pred)
+        k[2] += len(gold) - len(matched_gold)
         if len(matched_gold) != len(gold) or len(matched_pred) != len(pred):
-            fails.append({"id": c["id"], "missed": [g for k, g in enumerate(gold) if k not in matched_gold],
+            fails.append({"id": c["id"], "split": c.get("split", "dev"), "missed": [g for i, g in enumerate(gold) if i not in matched_gold],
                           "extra": [p for i, p in enumerate(pred) if i not in matched_pred],
                           **({"note": c["note"]} if c.get("note") else {})})
-    return {"metrics": {**M.prf(tp, fp, fn), "cases": len(_load("requirements.jsonl"))}, "failures": fails}
+    tot = [sum(x) for x in zip(*counts.values())]
+    return {"metrics": {**M.prf(*tot), "holdout_f1": M.prf(*counts["holdout"])["f1"],
+                        "cases": len(_load("requirements.jsonl"))}, "failures": fails}
 
 
 FAIR_RESUME = """{name}

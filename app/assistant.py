@@ -77,3 +77,12 @@ def system_prompt() -> str:
 
 def system_for(analysis: dict, job: dict | None, extra_skills: list[str]) -> str:
     return system_prompt() + "\n\n" + context_block(analysis, job, extra_skills)
+
+
+def prompt_parts(analysis: dict, job: dict | None, extra_skills: list[str]) -> tuple[str, str, str]:
+    """(system, cacheable, volatile) for the gateway: instructions and resume are stable across a whole
+    conversation and every job, so they form the cached prefix; the analysis/job context comes after it."""
+    resume = "<resume>\n" + _trim(analysis["_resume_text"], 10000) + "\n</resume>"
+    ctx = context_block(analysis, job, extra_skills)
+    volatile = ctx.split("<resume>")[0] + (ctx.split("</resume>", 1)[1] if "</resume>" in ctx else "")
+    return system_prompt(), resume, volatile.strip()

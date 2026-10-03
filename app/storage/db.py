@@ -54,6 +54,14 @@ analyses = Table("analyses", meta,
 kv = Table("kv", meta, Column("key", String(200), primary_key=True), Column("value", Text),
            Column("expires_at", Float, index=True))
 
+llm_calls = Table("llm_calls", meta,
+                  Column("id", Integer, primary_key=True, autoincrement=True), Column("owner", String(64), index=True),
+                  Column("analysis_id", String(32), index=True), Column("run_id", String(64)), Column("agent", String(60)),
+                  Column("provider", String(20)), Column("model", String(80)), Column("key_source", String(10)),
+                  Column("input_tokens", Integer), Column("output_tokens", Integer), Column("cached_tokens", Integer),
+                  Column("cache_write_tokens", Integer), Column("cost_usd", Float), Column("latency_ms", Integer),
+                  Column("status", String(20)), Column("cache_hit", Integer), Column("created_at", Float, index=True))
+
 Index("ix_jobs_company_title", jobs.c.company, jobs.c.title)
 
 _engine: Optional[Engine] = None
@@ -253,3 +261,27 @@ def delete_owner(owner: str) -> dict:
         r = c.execute(delete(resumes).where(resumes.c.owner == owner)).rowcount
         s = c.execute(delete(searches).where(searches.c.owner == owner)).rowcount
     return {"analyses": a, "resumes": r, "searches": s}
+
+
+# ---------- LLM call log (ROADMAP §8.2) ----------
+def log_llm_call(**row) -> None:
+    with engine().begin() as c:
+        c.execute(insert(llm_calls).values(created_at=time.time(), **row))
+
+
+def llm_spend(owner: str = "", analysis_id: str = "", since: float = 0.0) -> dict:
+    from sqlalchemy import func
+    q = select(func.count(), func.coalesce(func.sum(llm_calls.c.cost_usd), 0.0),
+               func.coalesce(func.sum(llm_calls.c.input_tokens), 0), func.coalesce(func.sum(llm_calls.c.output_tokens), 0),
+               func.coalesce(func.sum(llm_calls.c.cached_tokens), 0), func.coalesce(func.sum(llm_calls.c.cache_hit), 0),
+               func.sum(func.coalesce(llm_calls.c.cost_usd, -1e9)))
+    if owner:
+        q = q.where(llm_calls.c.owner == owner)
+    if analysis_id:
+        q = q.where(llm_calls.c.analysis_id == analysis_id)
+    if since:
+        q = q.where(llm_calls.c.created_at >= since)
+    with engine().connect() as c:
+        n, cost, inp, out, cached, hits, raw = c.execute(q).one()
+    return {"calls": n, "cost_usd": round(cost or 0.0, 6), "input_tokens": inp, "output_tokens": out,
+            "cached_tokens": cached, "result_cache_hits": hits, "cost_known": raw is None or raw >= 0}
