@@ -4,13 +4,17 @@
 > Every defect in §2 was reproduced against the code, not inferred from reading it.
 > Companion to [`PLAN.md`](PLAN.md) (the current design). This document is the plan for what comes next.
 
-## Status (updated 2026-10-04)
+## Status (updated 2026-10-03)
 
-| Phase | State | Notes |
+| Phase | State | Acceptance check (measured here) |
 |---|---|---|
-| **0 — Fix** | **Done** | D1–D14 fixed, each with regression tests (`tests/test_ssrf.py`, `tests/test_roadmap_phase0.py`, `tests/test_deep.py`). Acceptance met: SSRF suite (loopback, metadata IP, redirect-to-private, IPv6-mapped, 6to4, bad ports, trailing-dot `localhost.`) passes; D2 fixture = 2.83 y (34 months, inclusive) within 2.75 ± 0.1. |
-| **1 — Measure** | **Started** | `eval/` harness, 6 deterministic suites, metrics, committed baseline, CI gate (`python -m eval.run --check`, also run inside pytest) and `.github/workflows/ci.yml`; LLM pre-labelling tool. **Not done:** the ≥ 300 human-reviewed match pairs and the logistic weight fit — labels must come from people (see `eval/datasets/match/README.md`). |
-| 2–6 | Not started | |
+| **0 — Fix** | **Done** | D1–D14 fixed with regression tests. SSRF suite passes; D2 fixture = 2.83 y (34 months, inclusive) within 2.75 ± 0.1. |
+| **1 — Measure** | **Partly done** | Harness, 8 deterministic suites, baseline, CI gate. **Not done:** ≥ 300 human-reviewed match pairs, so Spearman ρ / F1@threshold / ECE on real labels and the weight fit can't be reported yet (`eval/datasets/match/README.md`). The fit script exists (`eval/fit_calibration.py`) and refuses to run on fewer than 300 reviewed pairs. |
+| **2 — Persist & stream** | **Done** | Refresh restores any report (E2E); a repeat search is served from cache (E2E, well under 2 s server-side); analyze = 0.2 s for 100 jobs with AI on (test). SQLite by default; the whole test suite also passes on Postgres 16 (`TEST_DATABASE_URL`, CI job). |
+| **3 — Understand** | **Done (offline-verified)** | Resume parser v3 + profile review UI with corrections that feed matching; LLM gateway (structured outputs, repair, retries, breaker, prompt caching, cost log, budgets); span-verified LLM requirement extractor; per-analysis AI cost + pre-flight estimates in the UI. Experience month-MAE 0.0 on 17 cases; rule extractor F1 0.96 (dev) / 0.93 (held-out). **Not measured:** the LLM extractor's F1 and the ">50 % cached tokens on 20 deep checks" target need a live API key (this sandbox has no network to providers). |
+| **4 — Match v3** | **Done, with data gaps** | Ontology relations (implies / related, shown per requirement), domain packs for healthcare, finance, legal, trades, education and retail, gates (authorisation, clearance, licences, languages, on-site, strict degree) reported separately from the score, requirement matrix with resume evidence and posting highlights, embeddings interface (fastembed when installed, deterministic hashing fallback), calibration layer. Skills F1: tech 0.95, non-tech 1.0 — **in-sample** (the non-tech cases were written with the packs). **Not done:** ESCO/O\*NET data import (loader tested on fixtures; hosts unreachable here); ρ/F1 improvement vs baseline needs the labelled match set. |
+| **5 — Agents** | **Done (scripted-model verified)** | In-house agent runtime for OpenAI + Anthropic tool calling, claim guard, Tailoring Agent + diff editor + .docx export (refuses edits with violations), Search Planner, Career Coach with tools + numbers check, Interview Coach v1. Claim-guard suite: 16 cases, 0 fabrications missed (dev set). **Not measured:** the live "0 unverifiable claims in 100 tailoring cases" eval (`eval/agents_live.py`) needs a real key. |
+| **6 — Retain** | **Done (single-VM scope)** | Magic-link accounts, tracker, watches + digests (email via SMTP, console otherwise), company resolver, 7 more sources (SmartRecruiters, Workable, Recruitee, Personio, Teamtailor, Workday, USAJOBS), market analyst, MV3 extension, Dockerfile + compose (Postgres), JSON logs, `/metrics`, hourly source canaries. **Deviations:** in-process scheduler instead of Redis/arq workers (fine for one VM); schema via `create_all`, no Alembic migrations yet; the Docker image build couldn't be run here (no Docker daemon), so it's covered by a CI job; source canaries can't go green in this sandbox because every job host is blocked; p95 search time not measured against live sources. |
 
 **Phase 0 decisions and deviations**
 - D8: SimHash threshold kept at ≤ 3 bits (realistic near-duplicate postings measured at 3, unrelated at 36); only applied
@@ -31,12 +35,13 @@
 
 | # | Finding | Suite |
 |---|---|---|
-| F1 | Requirement bullets shorter than 15 characters ("Python", "SQL") are dropped | requirements (recall 0.71) |
-| F2 | A trailing paragraph inside a Requirements section becomes a 0-coverage requirement | requirements |
-| F3 | Postings without headings/bullets yield one giant "requirement" (no sentence split) | requirements |
+| F1 | ~~Requirement bullets shorter than 15 characters are dropped~~ fixed in Phase 3 | requirements |
+| F2 | ~~A trailing paragraph inside a Requirements section becomes a requirement~~ fixed in Phase 3 | requirements |
+| F3 | ~~Postings without headings/bullets yield one giant "requirement"~~ fixed in Phase 3 (sentence split) | requirements |
+| F3b | Held-out misses: an "Our culture" heading and an unheaded bullet list (held-out F1 0.93) | requirements |
 | F4 | Degree spellings missed: "BA (Hons)", "LLB", "Doctor of Philosophy", "B.S. in" (regex `\b` after a dot) | education (0.80) |
 | F5 | City aliases: NYC ↔ New York, Bangalore ↔ Bengaluru, SF Bay Area; Paris not in EMEA list | location (0.80) |
-| F6 | Open-set gap: warehouse, teaching, legal skills absent from the taxonomy (→ §6.4 ontology) | skills (recall 0.83) |
+| F6 | Open-set gap: partly closed by the Phase 4 domain packs (healthcare, finance, legal, trades, education, retail); warehouse/logistics still thin | skills |
 | F7 | Negation phrasing "You don't need to know Go" missed; "APIs" alias over-fires; "Led a team" ≠ Leadership | skills |
 
 ## How to read this
