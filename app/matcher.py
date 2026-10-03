@@ -56,20 +56,33 @@ _STOP = set(
 )
 
 # ---------- education ----------
+_NOT_DEGREE = re.compile(r"\b(scrum|data|branch|quarter|web|ring|post|head|station|chess|grand)[\s-]?master|"
+                         r"master\s+(?:data|branch|class|plan|key|list|record|copy|bedroom|craftsman|of ceremon)|"
+                         r"\bmaster(?:ed|y|ing)\b|\bmasterclass\b", re.I)
 _EDU = [
-    ("PhD", 4, re.compile(r"\b(ph\.?\s?d|doctorate|doctoral)\b", re.I)),
-    ("Master's", 3, re.compile(r"\b(master'?s?|m\.\s?sc|msc|m\.s\.|mba|m\.?eng|m\.?\s?tech|post-?graduate)\b", re.I)),
+    ("PhD", 4, re.compile(r"\b(ph\.?\s?d|doctorate|doctoral degree|d\.?phil)\b", re.I)),
+    # ROADMAP D6: "master" only counts with degree context ("Certified Scrum Master" is not a degree)
+    ("Master's", 3, re.compile(r"\bmaster'?s\b(?!\s+(?:data|branch|class))|\bmasters?\s+(?:degree|of|in)\b|"
+                               r"\bmaster\s+of\s+(?:science|arts|business|engineering|technology|computer|education|"
+                               r"public|fine|laws?|philosophy|commerce|information)|\bm\.\s?sc\b|\bmsc\b|\bm\.s\.(?=\s|$)|"
+                               r"\bm\.?s\.?\s+in\b|\bmba\b|\bm\.?eng\b|\bm\.?\s?tech\b|post-?graduate degree", re.I)),
     ("Bachelor's", 2, re.compile(r"\b(bachelor'?s?|b\.\s?sc|bsc|b\.s\.|b\.a\.|b\.?eng|b\.?\s?tech|undergraduate degree|"
                                  r"(?:university|college) degree|degree in)\b", re.I)),
 ]
 _EDU_RANK = {name: rank for name, rank, _ in _EDU}
-_DEGREE_CUE = re.compile(r"\b(degree|bachelor|master|ph\.?\s?d|doctorate|bsc|msc|b\.s\.|m\.s\.|mba)\b", re.I)
+_DEGREE_CUE = re.compile(r"\b(degree|bachelor'?s?|ph\.?\s?d|doctorate|bsc|msc|b\.s\.|m\.s\.|mba|b\.?\s?tech|m\.?\s?tech)\b|"
+                         r"\bmaster'?s\b|\bmasters?\s+(?:degree|of|in)\b", re.I)
 _SOFTENER = re.compile(r"\b(or equivalent|equivalent (?:practical |work )?experience|preferred|a plus|nice to have|"
                        r"desirable|or similar experience|bonus)\b", re.I)
 
 
+def _degree_text(text: str) -> str:
+    return _NOT_DEGREE.sub(" ", text)
+
+
 def education_level(text: str) -> Optional[str]:
     """Highest degree level mentioned (resume side)."""
+    text = _degree_text(text)
     for name, _, pat in _EDU:
         if pat.search(text):
             return name
@@ -79,6 +92,7 @@ def education_level(text: str) -> Optional[str]:
 def required_education(lines: list[tuple[str, bool]]) -> tuple[Optional[str], bool, str]:
     """(level, strict, line) from requirement lines. Lowest level named in a degree line is the bar."""
     for text, preferred in lines:
+        text = _degree_text(text)
         if not _DEGREE_CUE.search(text):
             continue
         levels = [name for name, _, pat in _EDU if pat.search(text)]
@@ -240,13 +254,17 @@ class ResumeProfile:
 
     @classmethod
     def build(cls, text: str, years: float, extra_skills: set[str] | None = None) -> "ResumeProfile":
+        from .resume import strip_identity           # names/contacts never reach matching (ROADMAP §14.2)
+        text = strip_identity(text)
         return cls(text=text, skills=sk.extract_skills(text) | (extra_skills or set()), years=years, head=text[:400],
                    education=education_level(text), terms=frozenset(_content_terms(text)))
 
 
 def _line_coverage(text: str, profile: ResumeProfile) -> tuple[Optional[float], list[str]]:
     """Coverage 0-1 of one requirement line (None = can't judge), plus the skills it's missing."""
-    line_skills = sk.extract_skills(text)
+    line_skills, _neg = sk.extract_posting_skills(text)
+    if not line_skills and _neg:
+        return None, []                     # "No Java required": nothing to check on this line
     if line_skills:
         owned = [s for s in line_skills if s in profile.skills]
         missing = sorted(s for s in line_skills if s not in profile.skills)
@@ -259,8 +277,8 @@ def _line_coverage(text: str, profile: ResumeProfile) -> tuple[Optional[float], 
         if need == 0:
             return 1.0, []
         return (min(1.0, profile.years / need) if profile.years else 0.3), []
-    if _DEGREE_CUE.search(text):
-        levels = [name for name, _, pat in _EDU if pat.search(text)]
+    if _DEGREE_CUE.search(_degree_text(text)):
+        levels = [name for name, _, pat in _EDU if pat.search(_degree_text(text))]
         need = min((_EDU_RANK[n] for n in levels), default=2)
         have = _EDU_RANK.get(profile.education or "", 0)
         return (1.0 if have >= need else (0.5 if _SOFTENER.search(text) else 0.0)), []
@@ -270,12 +288,38 @@ def _line_coverage(text: str, profile: ResumeProfile) -> tuple[Optional[float], 
     return len(terms & profile.terms) / len(terms), []
 
 
+def total_from(components: dict[str, float], penalty: float = 0.0, capped: bool = False) -> int:
+    """The final 0-100 score from 0-1 components (single place the weights are applied)."""
+    total = sum(W[k] * components[k] for k in W) - penalty
+    if capped:
+        total = min(total, 0.45)
+    return round(max(0.0, min(1.0, total)) * 100)
+
+
+def weights_sentence() -> str:
+    """Human-readable weights, generated from W so prompts and docs can't drift (ROADMAP D12)."""
+    names = {"skills": "skills", "requirements": "requirement checklist", "role": "role fit",
+             "experience": "experience", "semantic": "semantic similarity"}
+    return ", ".join(f"{names[k]} {round(v * 100)}%" for k, v in W.items())
+
+
+def requirement_coverage(reqs: list[dict]) -> Optional[float]:
+    """Weighted mean coverage of requirement rows (must 1.0, nice 0.5); None if there are none."""
+    den = sum(0.5 if r["preferred"] else 1.0 for r in reqs)
+    if not den:
+        return None
+    return sum((0.5 if r["preferred"] else 1.0) * r["coverage"] for r in reqs) / den
+
+
 def score_job(job: dict, profile: ResumeProfile, idf: Optional[dict[str, float]] = None) -> dict:
     desc = job.get("description") or ""
     title = job.get("title") or ""
     req_text, pref_text = split_requirements(desc)
-    req_skills = sk.extract_skills(req_text + "\n" + title)   # title counts as a requirement signal too
-    pref_skills = sk.extract_skills(pref_text) - req_skills
+    # ROADMAP D5: skills the posting explicitly says are *not* needed are excluded
+    req_skills, neg_req = sk.extract_posting_skills(req_text + "\n" + title)   # title counts as a requirement too
+    pref_skills, neg_pref = sk.extract_posting_skills(pref_text)
+    pref_skills -= req_skills
+    negated = sorted((neg_req | neg_pref) - req_skills - pref_skills)
 
     weights: dict[str, float] = {}
     for s in req_skills:
@@ -307,14 +351,15 @@ def score_job(job: dict, profile: ResumeProfile, idf: Optional[dict[str, float]]
     # requirement lines
     reqs = []
     num = den = 0.0
-    for text, preferred in requirement_lines(desc):
+    lines = requirement_lines(desc)          # computed once per job (ROADMAP D14)
+    for text, preferred in lines:
         cov, miss = _line_coverage(text, profile)
         if cov is None:
             continue
         w = 0.5 if preferred else 1.0
         num += w * cov
         den += w
-        reqs.append({"text": text, "preferred": preferred, "coverage": round(cov, 2), "missing": miss,
+        reqs.append({"id": f"r{len(reqs) + 1}", "text": text, "preferred": preferred, "coverage": round(cov, 2), "missing": miss,
                      "status": "met" if cov >= 0.75 else "partial" if cov >= 0.35 else "missing"})
     req_score = num / den if den else skill_score
 
@@ -332,38 +377,33 @@ def score_job(job: dict, profile: ResumeProfile, idf: Optional[dict[str, float]]
     sem_raw = semantic_similarity(profile.text, desc, idf) if desc else 0.0
     sem_score = min(1.0, sem_raw / 0.30)
 
-    total = (W["skills"] * skill_score + W["requirements"] * req_score + W["role"] * t_score
-             + W["experience"] * e_score + W["semantic"] * sem_score)
-
     blockers: list[str] = []
-    edu_req, edu_strict, _ = required_education(requirement_lines(desc))
+    penalty = 0.0
+    edu_req, edu_strict, _ = required_education(lines)
     if edu_req and _EDU_RANK[edu_req] > _EDU_RANK.get(profile.education or "", 0):
         if edu_strict:
             blockers.append(f"Requires a {edu_req} degree; none found on your resume.")
-            total -= 0.08
+            penalty += 0.08
         else:
             blockers.append(f"Prefers a {edu_req} degree (or equivalent experience); none found on your resume.")
-            total -= 0.02
+            penalty += 0.02
     if req_yrs and not inferred and profile.years and profile.years < 0.6 * req_yrs:
         blockers.append(f"Asks for {req_yrs:.0f}+ years of experience; your resume shows about {profile.years:.0f}.")
     required_missing = sorted(s for s in req_skills if s not in profile.skills)
     low_conf = len(desc) < 80 or (not weights and not keyword_mode and not reqs)
-    if len(desc) < 80:  # title-only: can't judge skills fairly
-        total = min(total, 0.45)
-    total = max(0.0, min(1.0, total))
-
+    capped = len(desc) < 80        # title-only: can't judge skills fairly
+    components = {"skills": skill_score, "requirements": req_score, "role": t_score,
+                  "experience": e_score, "semantic": sem_score}
     return {
         "id": job["id"], "title": title, "company": job.get("company", ""),
         "location": job.get("location", ""), "url": job.get("url", ""), "posted": job.get("posted", ""),
         "source": job.get("source", ""), "sources": job.get("sources") or [job.get("source", "")],
         "salary": job.get("salary", ""), "remote": job.get("remote"),
-        "score": round(total * 100),
-        "components": {
-            "skills": round(skill_score * 100), "requirements": round(req_score * 100), "role": round(t_score * 100),
-            "experience": round(e_score * 100), "semantic": round(sem_score * 100),
-        },
+        "score": total_from(components, penalty, capped),
+        "components": {k: round(v * 100) for k, v in components.items()},
+        "penalty": penalty, "capped": capped,
         "matched_skills": matched, "missing_skills": missing, "required_missing": required_missing,
-        "matched_keywords": matched_kw, "missing_keywords": missing_kw,
+        "matched_keywords": matched_kw, "missing_keywords": missing_kw, "negated_skills": negated,
         "requirements": reqs, "requirements_met": sum(1 for r in reqs if r["status"] == "met"),
         "blockers": blockers, "education_required": edu_req, "education_strict": edu_strict,
         "required_years": req_yrs, "required_years_inferred": inferred,

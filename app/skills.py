@@ -8,7 +8,7 @@ _RAW: dict[str, dict[str, list[str]]] = {
     "Languages": {
         "Python": ["python"], "Java": ["java"], "JavaScript": ["javascript", "js", "ecmascript"],
         "TypeScript": ["typescript"], "C++": ["c++"], "C#": ["c#"], "Go": ["golang", "go lang"],
-        "Rust": ["rust"], "Ruby": ["ruby"], "PHP": ["php"], "Swift": ["swift"], "Kotlin": ["kotlin"],
+        "Rust": ["rust"], "Ruby": ["ruby programming", "ruby language"], "PHP": ["php"], "Swift": ["swift programming", "swift language"], "Kotlin": ["kotlin"],
         "Scala": ["scala"], "R": ["r programming", "rstudio", "r language"], "SQL": ["sql"],
         "Bash": ["bash", "shell scripting", "shell script"], "MATLAB": ["matlab"], "Perl": ["perl"],
         "C": ["c programming", "c language"], "Dart": ["dart"], "Objective-C": ["objective-c"],
@@ -24,8 +24,8 @@ _RAW: dict[str, dict[str, list[str]]] = {
         "Vue": ["vue", "vue.js", "vuejs"], "Next.js": ["next.js", "nextjs"],
         "Node.js": ["node.js", "nodejs", "node js"], "Express": ["express.js", "expressjs"],
         "Django": ["django"], "Flask": ["flask"], "FastAPI": ["fastapi"],
-        "Spring": ["spring", "spring boot", "springboot"], ".NET": [".net", "dotnet", "asp.net"],
-        "Rails": ["ruby on rails", "rails"], "Laravel": ["laravel"], "HTML": ["html", "html5"],
+        "Spring": ["spring boot", "springboot", "spring framework", "spring mvc", "spring cloud"], ".NET": [".net", "dotnet", "asp.net"],
+        "Rails": ["ruby on rails"], "Laravel": ["laravel"], "HTML": ["html", "html5"],
         "CSS": ["css", "css3", "sass", "scss"], "Tailwind": ["tailwind", "tailwindcss"],
         "GraphQL": ["graphql"], "REST APIs": ["restful", "rest api", "rest apis", "restful apis", "re:rest(?:ful)?\\s*(?:/\\s*graphql\\s*)?(?:api|apis|services|web services|endpoints)"],
         "Microservices": ["microservices", "microservice"], "gRPC": ["grpc"],
@@ -52,7 +52,7 @@ _RAW: dict[str, dict[str, list[str]]] = {
         "NLP": ["nlp", "natural language processing"], "Computer Vision": ["computer vision"],
         "LLMs": ["llm", "llms", "large language models", "generative ai", "genai", "gen ai"],
         "TensorFlow": ["tensorflow"], "PyTorch": ["pytorch"], "scikit-learn": ["scikit-learn", "sklearn"],
-        "Pandas": ["pandas"], "NumPy": ["numpy"], "Spark": ["spark", "pyspark"], "Hadoop": ["hadoop"],
+        "Pandas": ["pandas"], "NumPy": ["numpy"], "Spark": ["pyspark", "apache spark", "spark sql", "spark streaming"], "Hadoop": ["hadoop"],
         "Kafka": ["kafka"], "Airflow": ["airflow"], "dbt": ["dbt"], "Snowflake": ["snowflake"],
         "BigQuery": ["bigquery"], "Redshift": ["redshift"], "Databricks": ["databricks"],
         "ETL": ["etl", "elt", "data pipelines", "data pipeline"], "Data Modeling": ["data modeling", "data modelling"],
@@ -76,7 +76,7 @@ _RAW: dict[str, dict[str, list[str]]] = {
         "Firebase": ["firebase", "firestore"], "SQLite": ["sqlite"], "Cosmos DB": ["cosmos db", "cosmosdb"], "Supabase": ["supabase"],
     },
     "Engineering Practices": {
-        "Agile": ["agile"], "Scrum": ["scrum"], "Kanban": ["kanban"], "TDD": ["tdd", "test-driven development"],
+        "Agile": ["agile methodology", "agile methodologies", "agile development", "agile practices", "agile/scrum"], "Scrum": ["scrum"], "Kanban": ["kanban"], "TDD": ["tdd", "test-driven development"],
         "Unit Testing": ["unit testing", "unit tests", "pytest", "junit", "jest"],
         "System Design": ["system design", "distributed systems", "scalability"],
         "Code Review": ["code review", "code reviews"], "Jira": ["jira"],
@@ -121,7 +121,32 @@ _RAW: dict[str, dict[str, list[str]]] = {
     },
 }
 
-NO_CANON_ALIAS = {"Sales", "Recruiting", "Sketch", "Certifications", "Prototyping"}
+NO_CANON_ALIAS = {"Sales", "Recruiting", "Sketch", "Certifications", "Prototyping",
+                  "Swift", "Ruby", "Spring", "Rails", "Spark", "Agile"}
+
+# ROADMAP D4: everyday words that are also skills count only with a context word within ±CONTEXT_WINDOW tokens.
+CONTEXT_WINDOW = 8
+AMBIGUOUS: dict[str, tuple[list[str], set[str]]] = {
+    "Spring": (["spring"], {"java", "boot", "framework", "mvc", "kotlin", "jpa", "hibernate", "microservices", "maven",
+                            "gradle", "j2ee", "jee", "beans", "security", "cloud", "data"}),
+    "Swift": (["swift"], {"ios", "xcode", "apple", "cocoa", "objective-c", "swiftui", "uikit", "macos", "watchos",
+                          "ipados", "cocoapods", "kotlin", "mobile", "app", "apps"}),
+    "Rails": (["rails"], {"ruby", "activerecord", "rspec", "rubocop", "sidekiq", "ror", "gem", "gems", "postgresql"}),
+    "Agile": (["agile"], {"scrum", "kanban", "sprint", "sprints", "methodology", "methodologies", "practices", "ceremonies",
+                          "development", "delivery", "environment", "jira", "safe", "retrospectives", "standups",
+                          "stand-ups", "team", "teams", "framework", "coach", "squads"}),
+    "Ruby": (["ruby"], {"rails", "gem", "gems", "rspec", "rubocop", "sinatra", "programming", "developer", "engineer",
+                        "language", "bundler", "rake", "ror", "erb", "python", "java", "javascript", "php", "go"}),
+    "Spark": (["spark"], {"apache", "hadoop", "databricks", "scala", "etl", "streaming", "sql", "emr", "hive", "kafka",
+                          "data", "rdd", "dataframes", "dataframe", "pipelines", "big", "airflow", "python", "glue"}),
+}
+_SEASON_YEAR = re.compile(r"\b(?:spring|summer|fall|autumn|winter)\s+(?:term\s+|semester\s+|of\s+)?'?\d{2,4}\b", re.I)
+_TOKEN = re.compile(r"[a-z0-9+#][a-z0-9+#.\-]*", re.I)
+
+# ROADMAP D5: negation cues (clause-bounded) for skills in job postings.
+_CLAUSE_BREAK = re.compile(r"[.;:!?\n•]|\bbut\b|\bhowever\b|\bwhereas\b", re.I)
+_NEG_BEFORE = {"no", "not", "without", "never", "non", "nor"}
+_NEG_AFTER = re.compile(r"^\W*(?:\w+\W+){0,4}?(?:is\s+|are\s+)?(?:not|n't)\s+(?:required|needed|necessary|a requirement|mandatory)", re.I)
 
 # Skills so generic they should never alone drive a high score; counted at half weight.
 SOFT_CATEGORY = "Professional Skills"
@@ -137,6 +162,8 @@ def _compiled() -> list[tuple[str, str, re.Pattern]]:
             auto = len(canon) > 2 and canon not in NO_CANON_ALIAS and not any(a.startswith("re:") for a in aliases)
             names = aliases + ([canon] if auto else [])
             alts = sorted({a.lower() for a in names}, key=len, reverse=True)
+            if not alts:
+                continue
             # aliases prefixed "re:" are raw regexes (used to exclude common false positives)
             body = "|".join(a[3:] if a.startswith("re:") else re.escape(a) for a in alts)
             # group the alternation so the boundary guards apply to every alias, not just the first/last
@@ -152,8 +179,50 @@ def category_of(skill: str) -> str:
     return "Other"
 
 
+@lru_cache(maxsize=1)
+def _ambiguous_compiled() -> list[tuple[str, re.Pattern, set[str]]]:
+    return [(canon, re.compile(rf"(?<![A-Za-z0-9_+#.])(?:{'|'.join(map(re.escape, words))})(?![A-Za-z0-9_+#])", re.I), ctx)
+            for canon, (words, ctx) in AMBIGUOUS.items()]
+
+
+def _has_context(text: str, start: int, end: int, ctx: set[str]) -> bool:
+    before = _TOKEN.findall(text[max(0, start - 200):start])[-CONTEXT_WINDOW:]
+    after = _TOKEN.findall(text[end:end + 200])[:CONTEXT_WINDOW]
+    return any(t.lower().strip(".-") in ctx for t in before + after)
+
+
+def _matches(text: str) -> list[tuple[str, int, int]]:
+    """Every (skill, start, end) occurrence, after removing season-year phrases and applying context rules."""
+    clean = _SEASON_YEAR.sub(lambda m: " " * len(m.group(0)), text)   # keep offsets stable
+    out = [(canon, m.start(), m.end()) for canon, _, pat in _compiled() for m in pat.finditer(clean)]
+    for canon, pat, ctx in _ambiguous_compiled():
+        out += [(canon, m.start(), m.end()) for m in pat.finditer(clean) if _has_context(clean, m.start(), m.end(), ctx)]
+    return out
+
+
+def _negated(text: str, start: int, end: int) -> bool:
+    clause_start = max([m.end() for m in _CLAUSE_BREAK.finditer(text, 0, start)] or [0])
+    before = [t.lower() for t in _TOKEN.findall(text[clause_start:start])][-6:]
+    if any(t in _NEG_BEFORE or t.endswith("n't") for t in before):
+        return True
+    nxt = _CLAUSE_BREAK.search(text, end)
+    return bool(_NEG_AFTER.match(text[end: nxt.start() if nxt else len(text)]))
+
+
 def extract_skills(text: str) -> set[str]:
-    return {canon for canon, _, pat in _compiled() if pat.search(text)}
+    """Skills mentioned anywhere (used for resumes)."""
+    return {canon for canon, _, _ in _matches(text)}
+
+
+def extract_posting_skills(text: str) -> tuple[set[str], set[str]]:
+    """(required-or-mentioned skills, negated skills) for job-posting text.
+
+    A skill is negated (“No Java experience required”) only if *every* mention of it is negated."""
+    seen: dict[str, bool] = {}
+    for canon, start, end in _matches(text):
+        neg = _negated(text, start, end)
+        seen[canon] = seen.get(canon, True) and neg
+    return {k for k, neg in seen.items() if not neg}, {k for k, neg in seen.items() if neg}
 
 
 @lru_cache(maxsize=1)

@@ -84,11 +84,19 @@ export function ResumeCard({ value, onChange }: { value: ResumeState; onChange: 
       {err && <Alert>{err}</Alert>}
       {p && !busy && (
         <div className="preview" data-testid="resume-preview">
-          <div className="preview-head"><b>✓ Resume read</b><small>{p.words} words · ~{p.years || "?"} yrs experience · {p.education ?? "no degree found"}</small></div>
+          <div className="preview-head"><b>✓ Resume read</b><small>{p.words} words · ~{p.years ? p.years.toFixed(1) : "?"} yrs experience · {p.education ?? "no degree found"}</small></div>
           <div className="chips">{p.skills.slice(0, 24).map((s) => <span className="chip ok" key={s}>{s}</span>)}
             {p.skills.length > 24 && <span className="chip">+{p.skills.length - 24} more</span>}
             {p.skills.length === 0 && <span className="muted">No known skills detected; matching will rely on keywords.</span>}</div>
           <small className="muted">These are the skills the matcher sees. If something's missing, add it below.</small>
+          <details className="exp-spans">
+            <summary>Experience counted: {p.experience.months} months from {p.experience.spans.length} dated role{p.experience.spans.length === 1 ? "" : "s"}
+              {p.experience.precision === "year" ? " (some dates are year-only, so this is approximate)" : ""}
+              {p.experience.explicit_years > p.experience.months / 12 ? ` · using your stated ${p.experience.explicit_years} years` : ""}</summary>
+            {p.experience.spans.length === 0 ? <small>No dated work entries found{p.experience.method === "experience section" ? " in your Experience section" : ""}.</small> :
+              <ul>{p.experience.spans.map((x, i) => <li key={i}><b>{x.start} → {x.end}</b> ({x.months} mo) <span className="muted">{x.line}</span></li>)}</ul>}
+            <small className="muted">Education and project dates are not counted as work experience.</small>
+          </details>
         </div>
       )}
       <button type="button" className="link" onClick={() => setShowExtra(!showExtra)} aria-expanded={showExtra}>{showExtra ? "▾" : "▸"} Skills you have that aren't on your resume{value.extra.length ? ` (${value.extra.length})` : ""}</button>

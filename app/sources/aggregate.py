@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import re
 from collections import defaultdict
@@ -115,6 +116,7 @@ def _is_remote(job: Job) -> Optional[bool]:
 
 
 def location_ok(job: Job, q: JobQuery) -> bool:
+    """Whole-word location matching (ROADMAP D7): "US" must not match "Brussels", "India" not "Indianapolis"."""
     loc = q.location.strip().lower()
     if not loc:
         return True
@@ -123,17 +125,22 @@ def location_ok(job: Job, q: JobQuery) -> bool:
     if loc in ANYWHERE:
         return loc != "remote" or bool(remote)
     parts = [p.strip() for p in re.split(r"[,/|]", loc) if len(p.strip()) >= 2]
-    if any(p in jl for p in parts):
+    if any(_has_word(jl, p) for p in parts):
         return True
+    # the user typed a country: accept that country's name variants and its known cities
+    user_countries = {c for p in parts for c, names in COUNTRIES.items() if p == c or p in names}
+    for c in user_countries:
+        if any(_has_word(jl, n) for n in COUNTRIES[c]) or any(_has_word(jl, city) for city, cc in CITY_COUNTRY.items() if cc == c):
+            return True
     if not remote:
         return False
-    if not jl or any(w in jl for w in ("worldwide", "anywhere", "global")) or jl.strip() in ("remote", "remote (worldwide)"):
+    if not jl or any(_has_word(jl, w) for w in ("worldwide", "anywhere", "global")) or jl.strip() in ("remote", "remote (worldwide)"):
         return True
     for country in _countries_for(parts):       # remote job restricted to the user's country
         if any(_has_word(jl, n) for n in COUNTRIES[country]):
             return True
     for region, members in REGIONS.items():
-        if region in jl and any(p in members.split() or p in members for p in parts):
+        if _has_word(jl, region) and any(_has_word(members, p) for p in parts):
             return True
     return False
 
@@ -171,21 +178,55 @@ def _norm_company(c: str) -> str:
     return re.sub(r"[^a-z0-9]", "", c)
 
 
+def _city_key(job: Job) -> str:
+    loc = job.location.lower()
+    if not loc.strip() or (_is_remote(job) and re.search(r"remote|worldwide|anywhere|global", loc)):
+        return "remote"
+    return re.sub(r"[^a-z0-9]", "", re.split(r"[,;(/|-]", loc)[0])
+
+
+def simhash(text: str) -> int:
+    """64-bit SimHash over word 3-shingles (near-duplicate descriptions differ by few bits)."""
+    words = re.findall(r"[a-z0-9]+", text.lower())
+    if len(words) < 3:
+        return 0
+    v = [0] * 64
+    for i in range(len(words) - 2):
+        h = int.from_bytes(hashlib.md5(" ".join(words[i:i + 3]).encode()).digest()[:8], "big")
+        for b in range(64):
+            v[b] += 1 if h >> b & 1 else -1
+    return sum(1 << b for b in range(64) if v[b] > 0)
+
+
+def _merge(g: list[Job]) -> Job:
+    g.sort(key=lambda j: (SOURCE_PRIORITY.get(j.source, 3), -len(j.description)))
+    best = g[0]
+    longest = max(g, key=lambda j: len(j.description))
+    if len(longest.description) > len(best.description) + 200:
+        best.description = longest.description
+    best.sources = sorted({s for j in g for s in (j.sources or [j.source])}, key=lambda s: SOURCE_PRIORITY.get(s, 3))
+    return best
+
+
 def dedupe(jobs: list[Job]) -> list[Job]:
+    """ROADMAP D8: same company + title + city is one posting; then near-identical descriptions
+    (SimHash distance ≤ 3) at the same company and city are merged too (reposts with tweaked titles)."""
     groups: dict[str, list[Job]] = defaultdict(list)
     for j in jobs:
         comp = _norm_company(j.company)
-        key = f"{comp}|{re.sub(r'[^a-z0-9]', '', j.title.lower())}" if comp else f"url|{j.url or j.id}"
+        key = (f"{comp}|{re.sub(r'[^a-z0-9]', '', j.title.lower())}|{_city_key(j)}" if comp else f"url|{j.url or j.id}")
         groups[key].append(j)
-    out = []
-    for g in groups.values():
-        g.sort(key=lambda j: (SOURCE_PRIORITY.get(j.source, 3), -len(j.description)))
-        best = g[0]
-        longest = max(g, key=lambda j: len(j.description))
-        if len(longest.description) > len(best.description) + 200:
-            best.description = longest.description
-        best.sources = sorted({j.source for j in g}, key=lambda s: SOURCE_PRIORITY.get(s, 3))
-        out.append(best)
+    merged = [_merge(g) for g in groups.values()]
+    out: list[Job] = []
+    hashes: list[tuple[str, int]] = []
+    for j in merged:
+        comp, h = f"{_norm_company(j.company)}|{_city_key(j)}", simhash(j.description) if len(j.description) >= 200 else 0
+        dup = next((i for i, (k, hh) in enumerate(hashes) if comp == k and h and hh and bin(h ^ hh).count("1") <= 3), None)
+        if dup is None:
+            out.append(j)
+            hashes.append((comp, h))
+        else:
+            out[dup] = _merge([out[dup], j])
     return out
 
 

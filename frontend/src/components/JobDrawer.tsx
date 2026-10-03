@@ -45,7 +45,7 @@ export function JobDrawer({ analysisId, job, threshold, onClose, onDeep }: { ana
       <div className="drawer-grid">
         <div className="score-big"><span className={`score ${job.score >= threshold ? "hi" : job.score >= threshold - 20 ? "mid" : "lo"}`}>{job.score}%</span>
           <small>{job.score >= threshold ? "Qualified" : "Below threshold"}</small>
-          {d && <small className="muted">rules {d.det_score}% · AI {d.ai_score}%</small>}</div>
+          {d && <small className="muted">rules only {d.det_score}%</small>}</div>
         <div>
           {([["Skills", job.components.skills], ["Requirements", job.components.requirements], ["Role fit", job.components.role],
              ["Experience", job.components.experience], ["Semantic", job.components.semantic]] as const).map(([k, v]) => (
@@ -54,6 +54,7 @@ export function JobDrawer({ analysisId, job, threshold, onClose, onDeep }: { ana
         </div>
       </div>
       {job.blockers.length > 0 && <Alert kind="warn"><IconWarn /> {job.blockers.join(" ")}</Alert>}
+      {job.negated_skills.length > 0 && <small className="muted">Not required by this posting (it says so): {job.negated_skills.join(", ")}</small>}
 
       <h3 className="sec"><IconShield /> Deep AI check {d && <span className={`tag ${d.verdict === "strong" || d.verdict === "possible" ? "q" : "nq"}`}>{d.verdict || "done"}</span>}</h3>
       {!d && <div className="deep-cta"><small className="muted">The AI checks every requirement and must quote your resume as evidence; quotes are verified by the server.</small>
@@ -61,14 +62,22 @@ export function JobDrawer({ analysisId, job, threshold, onClose, onDeep }: { ana
       {deepErr && <Alert>{deepErr}</Alert>}
       {d && <>
         {d.summary && <p>{d.summary}</p>}
-        {d.unverified_claims > 0 && <Alert kind="warn">{d.unverified_claims} AI claim{d.unverified_claims > 1 ? "s" : ""} had no matching quote in your resume and {d.unverified_claims > 1 ? "were" : "was"} downgraded to “partial”.</Alert>}
+        <p className="small muted">{d.verified} of {d.assessed} AI judgements verified · {d.disagreements} disagreement{d.disagreements === 1 ? "" : "s"} with the rules ·
+          requirement score {d.requirements_component}% · overall {d.det_score}% → <b>{d.final_score}%</b></p>
+        {d.unverified_claims > 0 && <Alert kind="warn">{d.unverified_claims} AI claim{d.unverified_claims > 1 ? "s" : ""} had no matching or relevant quote in your resume, so the rules verdict was kept.</Alert>}
         <ul className="reqlist">
-          {d.requirements.map((r, i) => (
-            <li key={i}>
-              <StatusIcon s={r.status} />
+          {d.requirements.map((r) => (
+            <li key={r.id}>
+              <StatusIcon s={r.final_status} />
               <div><b>{r.requirement}</b> <small className="muted">{r.importance === "must" ? "required" : "nice to have"}</small>
+                <div className="small verdicts">
+                  {r.det_status && <span>Rules: <em className={`v-${r.det_status}`}>{r.det_status}</em></span>}
+                  <span>AI: <em className={`v-${r.ai_status.replace(" ", "-")}`}>{r.ai_status}</em>{r.verified ? " ✓ verified" : ""}</span>
+                  <span>Counted: <b>{r.source === "ai" ? "AI (verified)" : "rules"}</b></span>
+                  {r.disagree && <span className="warn-text">disagree</span>}
+                </div>
                 {r.note && <div className="muted small">{r.note}</div>}
-                {r.evidence && <blockquote className="evidence" title="Verified: found in your resume">“{r.evidence}”</blockquote>}
+                {r.evidence && <blockquote className="evidence" title="Verified: found in your resume and relevant">“{r.evidence}”</blockquote>}
                 {r.flag && <div className="warn-text small"><IconWarn /> {r.flag}{r.claimed_evidence ? `: “${r.claimed_evidence}”` : ""}</div>}
               </div>
             </li>
@@ -80,8 +89,8 @@ export function JobDrawer({ analysisId, job, threshold, onClose, onDeep }: { ana
       {job.requirements.length > 0 && <>
         <h3 className="sec">Requirement checklist <small className="muted">(rules-based: {job.requirements_met}/{job.requirements.length} met)</small></h3>
         <ul className="reqlist">
-          {job.requirements.map((r, i) => (
-            <li key={i}><StatusIcon s={r.status} /><div>{r.text} {r.preferred && <small className="muted">(nice to have)</small>}
+          {job.requirements.map((r) => (
+            <li key={r.id}><StatusIcon s={r.status} /><div>{r.text} {r.preferred && <small className="muted">(nice to have)</small>}
               {r.missing.length > 0 && <div className="small miss-line">missing: {r.missing.join(", ")}</div>}</div></li>
           ))}
         </ul>

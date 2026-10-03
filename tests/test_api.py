@@ -108,6 +108,7 @@ async def test_search_filters_forwarded(client, monkeypatch):
         await wait_done(c, r.json()["search_id"])
         assert (await c.post("/api/search", json={"title": "x y", "workplace": ["moon"]})).status_code == 422
     assert seen.pop("warnings") == []
+    assert callable(seen.pop("prefilter")) and callable(seen.pop("postfilter"))
     assert seen == {"experience": ["entry", "mid_senior"], "job_types": ["contract"],
                     "workplace": ["remote"], "sort": "relevant"}
 

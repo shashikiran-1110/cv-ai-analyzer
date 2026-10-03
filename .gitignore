@@ -5,3 +5,5 @@ __pycache__/
 .pytest_cache/
 node_modules/
 frontend/dist/
+eval/reports/latest.md
+eval/reports/ci.md

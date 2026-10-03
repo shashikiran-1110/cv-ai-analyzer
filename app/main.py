@@ -321,7 +321,8 @@ async def resume_preview(resume_file: Optional[UploadFile] = File(None, alias="r
     else:
         raise HTTPException(422, "Upload a PDF or paste at least 100 characters of resume text.")
     found = sorted(skills.extract_skills(text))
-    return {"chars": len(text), "words": len(text.split()), "years": resume.estimate_years(text),
+    exp = resume.experience(text)
+    return {"chars": len(text), "words": len(text.split()), "years": exp["years"], "experience": exp,
             "skills": found, "education": matcher.education_level(text), "headline": text.strip().splitlines()[0][:120]}
 
 
@@ -331,13 +332,12 @@ def _compute(a: dict, extra: list[str], threshold: int) -> dict:
     if "idf" not in a:  # corpus statistics for semantic similarity: these postings + the resume
         a["idf"] = matcher.corpus_idf([j.get("description") or "" for j in a["jobs_full"]] + [a["resume_text"]])
     results = [matcher.score_job(j, profile, a["idf"]) for j in a["jobs_full"]]
-    for r in results:  # blend in any deep AI verification already done for this job
-        d = a.get("deep", {}).get(r["id"])
+    for r in results:  # merge verified AI judgments (Deep Verifier v2); the engine recomputes the score
         r["score_det"] = r["score"]
-        if d:
-            d = {**d, "det_score": r["score"], "final_score": deepmatch.blend(r["score"], d["ai_score"])}
-            r["deep"] = d
-            r["score"] = d["final_score"]
+        stored = a.get("deep", {}).get(r["id"])
+        if stored:
+            r["deep"] = deepmatch.combine(r, stored)
+            r["score"] = r["deep"]["final_score"]
     results.sort(key=lambda r: -r["score"])
     return {"summary": matcher.aggregate(results, profile, threshold), "jobs": results}
 
@@ -489,11 +489,11 @@ async def deep_check(aid: str, job_id: str, request: Request):
     scored = next((r for r in a["result"]["jobs"] if r["id"] == job_id), None)
     if scored is None:
         raise HTTPException(404, "Job not found in this analysis.")
-    det = scored.get("score_det", scored["score"])
-    out = await deepmatch.assess(cfg, job, {**scored, "score": det}, a["resume_text"])
-    a["deep"][job_id] = out
+    base = {**scored, "score": scored.get("score_det", scored["score"])}
+    a["deep"][job_id] = await deepmatch.assess(cfg, job, base, a["resume_text"])
     computed = await run_in_threadpool(_compute, a, a["extra"], a["result"]["summary"]["threshold"])
     a["result"].update(computed)
+    out = next(r["deep"] for r in computed["jobs"] if r["id"] == job_id)
     return {"deep": out, "summary": computed["summary"], "jobs": computed["jobs"]}
 
 

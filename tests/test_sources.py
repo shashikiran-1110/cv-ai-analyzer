@@ -138,7 +138,8 @@ async def test_network_block_message():
 async def test_aggregate_filters_dedupes_and_isolates_failures(monkeypatch):
     async def fake_li(title, location, count, hours=None, on_progress=None, client=None, **kw):
         await on_progress("details", 1, 1)
-        return [Job(id="1", title="Data Engineer", company="Globex Inc.", location="London", description="x" * 2000)]
+        return [Job(id="1", title="Data Engineer", company="Globex Inc.", location="Remote", description="x" * 2000),
+                Job(id="2", title="Data Engineer", company="Globex Inc.", location="London", description="y" * 300)]
     monkeypatch.setattr(linkedin, "search_jobs", fake_li)
 
     def handler(request):
@@ -161,8 +162,10 @@ async def test_aggregate_filters_dedupes_and_isolates_failures(monkeypatch):
     assert not any(j.company == "Cobalt GmbH" for j in jobs)                   # Berlin != London
     assert not any(j.title == "Account Executive" for j in jobs)               # greenhouse irrelevant role
     globex = [j for j in jobs if "Globex" in j.company]
-    assert len(globex) == 1 and set(globex[0].sources) == {"linkedin", "remoteok"}   # deduped across sources
-    assert globex[0].source == "linkedin" and len(globex[0].description) >= 2000
+    remote = [j for j in globex if j.location in ("", "Remote")]
+    assert len(globex) == 2                                              # London and remote listings stay separate (D8)
+    assert len(remote) == 1 and set(remote[0].sources) == {"linkedin", "remoteok"}   # same posting, two sources → one
+    assert remote[0].source == "linkedin" and len(remote[0].description) >= 2000
     assert any(j.source == "remotive" for j in jobs) and any(j.source == "themuse" for j in jobs)
     assert updates[-1]["linkedin"] == "done"
 
@@ -202,7 +205,8 @@ def test_jsonld_import_and_fallback():
     j = parse_job_page(html, "https://wellfound.com/jobs/123-data-engineer")
     assert j.title == "Data Engineer" and j.company == "Acme" and "London, GB" in j.location and j.remote
     assert "Build pipelines" in j.description and "70000" in j.salary and j.posted.startswith("2026-09-30")
-    plain = "<html><head><title>Ops Engineer</title></head><body><main>" + "<p>We need ops skills.</p>" * 30 + "</main></body></html>"
+    plain = ("<html><head><title>Ops Engineer</title></head><body><main><h2>Requirements</h2>"
+             + "<p>3+ years of experience running Linux servers.</p>" * 15 + "<p>Apply now.</p></main></body></html>")
     f = parse_job_page(plain, "https://careers.example.com/1")
     assert f.title == "Ops Engineer" and f.extra.get("unstructured")
     assert parse_job_page("<html><body>nothing</body></html>", "https://x") is None

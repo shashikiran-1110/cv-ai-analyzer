@@ -1,0 +1,17 @@
+{"id": "d2-edu-vs-work", "today": "2026-10-04", "months": 34, "text": "Education\nB.Tech, XYZ University, 2018 - 2022\nExperience\nData Annotator, Auditoria, Jan 2024 - Present"}
+{"id": "d3-short-internship", "today": "2026-10-04", "months": 3, "text": "Experience\nIntern, Acme, Jun 2023 - Aug 2023"}
+{"id": "two-roles", "today": "2026-10-04", "months": 91, "text": "Experience\nAnalyst, Foo, Mar 2019 – Feb 2021\nSenior Analyst, Bar, Apr 2021 – Present"}
+{"id": "overlap", "today": "2026-10-04", "months": 39, "text": "Work Experience\nEngineer, A, Jan 2020 - Dec 2022\nConsultant (part-time), B, Jun 2022 - Mar 2023"}
+{"id": "numeric-mm-yyyy", "today": "2026-10-04", "months": 24, "text": "Experience\nDeveloper, C, 06/2018 - 05/2020"}
+{"id": "year-only", "today": "2026-10-04", "months": 36, "text": "Experience\nTeacher, D School, 2015 - 2017"}
+{"id": "projects-excluded", "today": "2026-10-04", "months": 24, "text": "Projects\nThesis pipeline, 2021 - 2022\nExperience\nData Engineer, E, Sep 2022 - Aug 2024"}
+{"id": "no-headings-university", "today": "2026-10-04", "months": 36, "text": "BSc Physics, Leeds University, 2014 - 2017\nAnalyst, Barclays, Oct 2017 - Sep 2020"}
+{"id": "internships-heading", "today": "2026-10-04", "months": 16, "text": "Internships\nSWE Intern, Google, May 2022 - Aug 2022\nExperience\nSoftware Engineer, Meta, Jan 2023 - Dec 2023"}
+{"id": "career-gap", "today": "2026-10-04", "months": 36, "text": "Experience\nClerk, F, Jan 2010 - Dec 2011\nClerk, G, Jan 2015 - Dec 2015"}
+{"id": "apostrophe-years", "today": "2026-10-04", "months": 22, "text": "Experience\nAnalyst, H, Sep '21 – Jun '23"}
+{"id": "iso-months", "today": "2026-10-04", "months": 6, "text": "Experience\nContractor, I, 2023-01 to 2023-06"}
+{"id": "volunteering-excluded", "today": "2026-10-04", "months": 12, "text": "Volunteering\nRed Cross, 2016 - 2020\nExperience\nNurse, NHS, Feb 2021 - Jan 2022"}
+{"id": "full-month-names", "today": "2026-10-04", "months": 3, "text": "Experience\nTemp, J, January 2020 – March 2020"}
+{"id": "student-plus-job", "today": "2026-10-04", "months": 44, "text": "Education\nMSc, UCL, Sep 2025 - Present\nExperience\nData Analyst, K, Jan 2022 - Aug 2025"}
+{"id": "date-on-next-line", "today": "2026-10-04", "months": 24, "text": "Experience\nBackend Engineer — L\nJan 2021 – Dec 2022"}
+{"id": "two-column-mangled", "today": "2026-10-04", "months": 30, "text": "Experience Skills\nEngineer, M Python, SQL\nJul 2020 - Dec 2022 AWS"}

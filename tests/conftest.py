@@ -30,3 +30,24 @@ RESUME_LINES = [
 @pytest.fixture
 def resume_pdf() -> bytes:
     return make_pdf(RESUME_LINES)
+
+
+FAKE_DNS = {"localhost": ["127.0.0.1"], "internal.corp.example": ["10.0.0.5"],
+            "rebind.example": ["93.184.216.34", "127.0.0.1"], "metadata.example": ["169.254.169.254"]}
+
+
+@pytest.fixture(autouse=True)
+def fake_dns(monkeypatch):
+    """No real DNS in tests: unknown hostnames resolve to a public documentation-range address."""
+    from app.net import safe_fetch
+
+    async def resolve(host, port):
+        return FAKE_DNS.get(host.lower(), ["93.184.216.34"])
+    monkeypatch.setattr(safe_fetch, "resolve", resolve)
+
+
+@pytest.fixture(autouse=True)
+def fast_linkedin(monkeypatch):
+    """No politeness sleeps between LinkedIn pages in tests."""
+    from app import linkedin
+    monkeypatch.setattr(linkedin, "PAGE_DELAY", 0)

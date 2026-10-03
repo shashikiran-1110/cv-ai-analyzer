@@ -16,11 +16,14 @@ import httpx
 from bs4 import BeautifulSoup
 
 from .. import linkedin
+from ..net.safe_fetch import UnsafeURL, safe_get
 from ..jobmodel import Job
 from ..textutil import html_to_text, parse_date
-from .base import UA, JobQuery, Source, SourceError, get
+from .base import UA, JobQuery, Source, SourceError
 
 _LI = re.compile(r"linkedin\.com/jobs/(?:view|collections/[^?]*currentJobId=)[^\d]*?(\d{6,})|currentJobId=(\d{6,})")
+_JOB_CUES = [r"\brequirements?\b", r"\bqualifications?\b", r"\bresponsibilit", r"\bapply\b",
+             r"\bexperience\b", r"\b(?:full|part)[\s-]time\b", r"\bsalary\b|\bcompensation\b", r"\bwhat you'?ll\b"]
 _BLOCKY = {"wellfound.com": "Wellfound", "angel.co": "Wellfound", "indeed.com": "Indeed", "glassdoor.com": "Glassdoor"}
 
 
@@ -89,7 +92,8 @@ def parse_job_page(html: str, url: str) -> Optional[Job]:
     title = (soup.find("meta", property="og:title") or {}).get("content") or (soup.title.string if soup.title else "")
     main = soup.find("main") or soup.find("article") or soup.body
     text = html_to_text(main.decode_contents()) if main else ""
-    if title and len(text) > 300:
+    cues = sum(bool(re.search(p, text, re.I)) for p in _JOB_CUES)
+    if title and len(text) > 300 and cues >= 2:   # don't turn arbitrary pages into "job descriptions"
         return Job(id="url-" + hashlib.md5(url.encode()).hexdigest()[:12], title=title.strip()[:200], url=url,
                    description=text[:20000], source="url", extra={"unstructured": True})
     return None
@@ -104,7 +108,7 @@ async def import_urls(q: JobQuery, client: httpx.AsyncClient) -> list[Job]:
         pu = urlparse(url)
         if pu.scheme not in ("http", "https") or not pu.netloc:
             raise SourceError(f"Not a valid URL: {url[:80]}", "config")
-        m = _LI.search(url)
+        m = _LI.search(url) if (pu.hostname or "").lower().endswith("linkedin.com") else None
         if m:
             jid = m.group(1) or m.group(2)
             html = await linkedin._get(client, linkedin.DETAIL_URL.format(job_id=jid), retries=2)
@@ -115,16 +119,22 @@ async def import_urls(q: JobQuery, client: httpx.AsyncClient) -> list[Job]:
             return Job(id=jid, title=t.get_text(strip=True) if t else "LinkedIn job", company=c.get_text(strip=True) if c else "",
                        url=f"https://www.linkedin.com/jobs/view/{jid}", description=d["description"],
                        seniority=d["seniority"], employment_type=d["employment_type"], source="linkedin")
-        host = pu.netloc.lower().removeprefix("www.")
+        host = (pu.hostname or "").lower().removeprefix("www.")
         brand = next((v for k, v in _BLOCKY.items() if host.endswith(k)), None)
         try:
-            html = await get(client, url, name=brand or host, as_json=False, retries=2,
-                             headers={"User-Agent": UA, "Accept": "text/html,application/xhtml+xml"})
-        except SourceError as e:
-            if brand and e.kind in ("blocked", "auth", "rate_limit", "http"):
+            page = await safe_get(client, url, headers={"User-Agent": UA, "Accept": "text/html,application/xhtml+xml"})
+        except UnsafeURL as e:
+            raise SourceError(f"{url[:80]}: {e}", "config")
+        except (httpx.ProxyError, httpx.ConnectError, httpx.ConnectTimeout) as e:
+            raise SourceError(f"Can't connect to {host} ({type(e).__name__}).", "network")
+        except httpx.HTTPError as e:
+            raise SourceError(f"{host}: network error ({type(e).__name__}).", "http")
+        if page.status != 200:
+            if brand:
                 raise SourceError(f"{brand} blocked the request for {url[:80]} (it blocks automated access). "
                                   "Open the job in your browser and use “Paste jobs” instead.", "blocked")
-            raise
+            raise SourceError(f"{host} returned HTTP {page.status} for {url[:80]}.", "http")
+        html = page.text
         job = parse_job_page(html, url)
         if not job:
             raise SourceError(f"Couldn't find a job posting on {url[:80]}"

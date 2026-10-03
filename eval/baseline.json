@@ -1,0 +1,11 @@
+{
+  "education.accuracy": 0.8,
+  "experience.mae_months": 0.0,
+  "experience.within_1_month": 1.0,
+  "fairness.identical_rate": 1.0,
+  "location.accuracy": 0.8,
+  "requirements.f1": 0.7895,
+  "skills.f1": 0.9016,
+  "skills.negation_accuracy": 0.9091,
+  "skills.trap_pass_rate": 0.9091
+}

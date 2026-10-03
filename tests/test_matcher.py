@@ -57,7 +57,8 @@ def test_experience_inference_from_title():
 
 def test_estimate_years_merges_overlaps():
     t = "A Co 2015 - 2018\nB Co 2017 – 2020\nC Co Mar 2021 - Present"
-    assert resume.estimate_years(t, date(2026, 1, 1)) == 5 + 5  # 2015-2020 and 2021-2026
+    # Jan 2015–Dec 2020 (72 months, overlap merged) + Mar 2021–Jan 2026 (59 months), inclusive
+    assert resume.experience(t, date(2026, 1, 1))["months"] == 72 + 59
     assert resume.estimate_years("I have 8+ years of experience", date(2026, 1, 1)) == 8
 
 

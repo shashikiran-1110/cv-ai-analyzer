@@ -23,14 +23,17 @@ export interface SearchStatus {
   error: string | null; query: SearchQuery; jobs?: JobSummary[]; warnings?: string[]; sources?: SourceStat[];
   linkedin?: { stage: string; done: number; total: number } | null;
 }
-export interface ReqCheck { text: string; preferred: boolean; coverage: number; missing: string[]; status: "met" | "partial" | "missing" }
+export interface ReqCheck { id: string; text: string; preferred: boolean; coverage: number; missing: string[]; status: "met" | "partial" | "missing" }
 export interface DeepReq {
-  requirement: string; importance: "must" | "nice"; status: "met" | "partial" | "missing";
-  evidence: string; claimed_evidence: string; verified: boolean; note: string; flag: string;
+  id: string; requirement: string; importance: "must" | "nice"; preferred: boolean; coverage: number;
+  det_status: "met" | "partial" | "missing" | null; ai_status: "met" | "partial" | "missing" | "not assessed";
+  final_status: "met" | "partial" | "missing"; source: "ai" | "rules"; verified: boolean;
+  evidence: string; claimed_evidence: string; flag: string; note: string; disagree: boolean;
 }
 export interface DeepResult {
-  job_id: string; ai_score: number; det_score: number; final_score: number; verdict: string; summary: string;
-  requirements: DeepReq[]; unverified_claims: number; provider: string; model: string;
+  job_id: string; mode: "fixed" | "open"; verdict: string; summary: string; det_score: number; final_score: number;
+  requirements_component: number; verified: number; assessed: number; unverified_claims: number; disagreements: number;
+  requirements: DeepReq[]; provider: string; model: string;
 }
 export interface ScoredJob {
   id: string; title: string; company: string; location: string; url: string; posted: string; score: number;
@@ -38,7 +41,7 @@ export interface ScoredJob {
   components: { skills: number; requirements: number; role: number; experience: number; semantic: number };
   matched_skills: string[]; missing_skills: string[]; required_missing: string[];
   matched_keywords: string[]; missing_keywords: string[];
-  requirements: ReqCheck[]; requirements_met: number; blockers: string[]; education_required: string | null;
+  requirements: ReqCheck[]; requirements_met: number; blockers: string[]; education_required: string | null; negated_skills: string[];
   required_years: number | null; required_years_inferred: boolean; confidence: "high" | "low"; deep?: DeepResult;
 }
 export interface SkillStat { skill: string; category: string; jobs: number; pct: number }
@@ -62,6 +65,10 @@ export interface AppConfig { max_jobs: number; default_threshold: number; server
 export interface VerifyResult { ok: boolean; warning?: boolean; message: string }
 export interface SkillInfo { name: string; category: string }
 export interface ChatMsg { role: "user" | "assistant"; content: string }
-export interface ResumePreview { chars: number; words: number; years: number; skills: string[]; education: string | null; headline: string }
+export interface ExperienceSpan { start: string; end: string; months: number; line: string }
+export interface ResumePreview {
+  chars: number; words: number; years: number; skills: string[]; education: string | null; headline: string;
+  experience: { months: number; years: number; precision: string; method: string; explicit_years: number; spans: ExperienceSpan[] };
+}
 export interface CheckResult { name: string; ok: boolean; message: string; kind?: string }
 export interface Diagnosis { api: CheckResult; checks: Record<string, CheckResult>; ai_key: VerifyResult }

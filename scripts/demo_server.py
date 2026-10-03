@@ -25,6 +25,7 @@ from fastapi import Request  # noqa: E402
 from fastapi.responses import JSONResponse, StreamingResponse  # noqa: E402
 
 from app import config, linkedin, main  # noqa: E402
+from app.net import safe_fetch  # noqa: E402
 from app.jobmodel import Job  # noqa: E402
 from app.sources import aggregate  # noqa: E402
 from app.sources.sample import sample_jobs  # noqa: E402
@@ -161,6 +162,12 @@ aggregate.httpx = _HttpxProxy(portal)                                          #
 main.httpx = _HttpxProxy(lambda r: httpx.Response(200, text="ok"))            # connection check
 
 
+async def _demo_resolve(host, port):   # offline DNS: every hostname is "public"; IP literals are still checked
+    return ["93.184.216.34"]
+
+safe_fetch.resolve = _demo_resolve
+
+
 # ---------- fake OpenAI ----------
 @main.app.get("/fake-openai/v1/models/{model}")
 async def fm(model: str, request: Request):
@@ -173,23 +180,25 @@ async def fm(model: str, request: Request):
 
 
 def _deep_answer(prompt: str) -> dict:
+    """Deep Verifier v2 protocol: judge the listed requirement ids. Deliberately includes one fabricated quote and
+    one real-but-irrelevant quote so the server-side verification is visible in the demo."""
     resume = prompt.split("<resume>", 1)[-1].split("</resume>", 1)[0]
     lines = [l.strip() for l in resume.splitlines() if len(l.split()) >= 6]
-    quote = " ".join(lines[0].split()[:10]) if lines else ""
-    job = prompt.split("<job>", 1)[-1].split("</job>", 1)[0]
-    reqs = [re.sub(r"^[•\-\s]+", "", l).strip() for l in job.splitlines() if l.strip().startswith(("•", "-"))][:5] or ["Relevant experience"]
+    reqs = re.findall(r"^- \[(r\d+)\] \((?:must|nice)\) (.+)$", prompt, re.M)
     out = []
-    for i, r in enumerate(reqs):
-        if i == 0:
-            out.append({"requirement": r, "importance": "must", "status": "met", "evidence": quote, "note": "Directly shown."})
-        elif i == 1:
-            out.append({"requirement": r, "importance": "must", "status": "met",
-                        "evidence": "Led a global team of 40 engineers across five continents", "note": "(demo: fabricated quote)"})
-        elif i == 2:
-            out.append({"requirement": r, "importance": "nice", "status": "partial", "evidence": quote, "note": "Adjacent experience."})
+    for i, (rid, text) in enumerate(reqs):
+        words = set(re.findall(r"[a-z]{3,}", text.lower()))
+        quote = next((l for l in lines if words & set(re.findall(r"[a-z]{3,}", l.lower()))), "")
+        if i == 1:
+            out.append({"id": rid, "status": "met", "evidence": "Led a global team of 40 engineers across five continents",
+                        "note": "(demo: fabricated quote, will be rejected)"})
+        elif i == 2 and lines:
+            out.append({"id": rid, "status": "met", "evidence": lines[-1][:120], "note": "(demo: real but unrelated quote)"})
+        elif quote:
+            out.append({"id": rid, "status": "met", "evidence": " ".join(quote.split()[:20]), "note": "Shown on the resume."})
         else:
-            out.append({"requirement": r, "importance": "must", "status": "missing", "evidence": "", "note": "Not shown on the resume."})
-    return {"verdict": "possible", "summary": "Demo assessment: solid core overlap; one claim could not be verified.", "requirements": out}
+            out.append({"id": rid, "status": "missing", "evidence": "", "note": "Not shown on the resume."})
+    return {"verdict": "possible", "summary": "Demo assessment of the engine's requirement checklist.", "assessments": out}
 
 
 @main.app.post("/fake-openai/v1/chat/completions")
@@ -207,7 +216,7 @@ async def fc(request: Request):
                 await asyncio.sleep(0.02)
             yield "data: [DONE]\n\n"
         return StreamingResponse(gen(), media_type="text/event-stream")
-    if "requirement by requirement" in user:
+    if "Requirements to judge" in user or "has no clearly structured requirement list" in user:
         await asyncio.sleep(0.3)
         return {"choices": [{"message": {"content": json.dumps(_deep_answer(user))}}]}
     out = {"summary": "AI: strong data-engineering profile; main gap is container orchestration.",

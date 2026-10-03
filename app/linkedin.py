@@ -7,6 +7,7 @@ parsers are defensive and every network call retries with backoff.
 from __future__ import annotations
 
 import asyncio
+import math
 import re
 from typing import Awaitable, Callable, Optional
 
@@ -20,6 +21,7 @@ from .textutil import html_to_text
 SEARCH_URL = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
 DETAIL_URL = "https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{job_id}"
 PAGE_SIZE = 10
+PAGE_DELAY = 0.4
 # UI value -> LinkedIn filter code
 EXPERIENCE = {"internship": "1", "entry": "2", "associate": "3", "mid_senior": "4", "director": "5", "executive": "6"}
 JOB_TYPES = {"full_time": "F", "part_time": "P", "contract": "C", "temporary": "T", "internship": "I", "other": "O"}
@@ -189,9 +191,19 @@ async def search_jobs(
     workplace: Optional[list[str]] = None,
     sort: str = "recent",
     warnings: Optional[list[str]] = None,
+    prefilter: Optional[Callable[[Job], bool]] = None,
+    postfilter: Optional[Callable[[Job], bool]] = None,
 ) -> list[Job]:
-    """Search, page through results, then fetch each job's full description."""
+    """Search, page through results, then fetch full descriptions.
+
+    ROADMAP D9: LinkedIn returns plenty of loosely related cards, so we collect up to ceil(count × 2.5) cards
+    (min 30, cap 250), keep those passing `prefilter` (cheap, card-level: title/location/date), and fetch details in rank
+    order until `count` jobs also pass `postfilter` (needs the description/criteria) or candidates run out."""
     count = max(1, min(count, config.MAX_JOBS))
+    # roadmap: ceil(count × 2.5), cap 250; floor of 3 pages so small requests survive low-relevance pages
+    max_cards = min(250, max(math.ceil(count * 2.5), 3 * PAGE_SIZE))
+    keep = prefilter or (lambda j: True)
+    accept = postfilter or (lambda j: True)
     own_client = client is None
     client = client or httpx.AsyncClient(headers=HEADERS, timeout=20, follow_redirects=True)
 
@@ -210,9 +222,10 @@ async def search_jobs(
                 params[key] = ",".join(codes)
         params["sortBy"] = "R" if sort == "relevant" else "DD"
         jobs: dict[str, Job] = {}
+        kept: list[Job] = []
         start, empty_pages = 0, 0
-        while len(jobs) < count and start < 1000 and empty_pages < 2:
-            await progress("searching", len(jobs), count)
+        while len(kept) < count and len(jobs) < max_cards and start < 1000 and empty_pages < 2:
+            await progress("searching", len(kept), count)
             try:
                 html = await _get(client, SEARCH_URL, {**params, "start": start})
             except LinkedInError as e:
@@ -226,10 +239,13 @@ async def search_jobs(
             empty_pages = empty_pages + 1 if not new else 0
             for j in new:
                 jobs[j.id] = j
+                if keep(j):
+                    kept.append(j)
             start += PAGE_SIZE
-            await asyncio.sleep(0.4)
-        selected = list(jobs.values())[:count]
-        if not selected:
+            await asyncio.sleep(PAGE_DELAY)
+        if not kept:
+            if jobs and warnings is not None:
+                warnings.append(f"LinkedIn returned {len(jobs)} postings but none matched the title/location filters.")
             return []
 
         sem = asyncio.Semaphore(config.DETAIL_CONCURRENCY)
@@ -250,15 +266,20 @@ async def search_jobs(
                 except LinkedInError:
                     failed += 1  # keep the job; it is flagged description_missing
                 done += 1
-                await progress("details", done, len(selected))
+                await progress("details", done, max(done, count))
                 await asyncio.sleep(0.2)
 
-        await progress("details", 0, len(selected))
-        await asyncio.gather(*(fetch_detail(j) for j in selected))
+        selected: list[Job] = []
+        queue = list(kept)
+        while queue and len(selected) < count:          # fetch only as many details as still needed
+            batch, queue = queue[: count - len(selected)], queue[count - len(selected):]
+            await progress("details", done, done + len(batch))
+            await asyncio.gather(*(fetch_detail(j) for j in batch))
+            selected += [j for j in batch if accept(j)]
         if failed and warnings is not None:
-            warnings.append(f"{failed} of {len(selected)} job descriptions couldn't be loaded (LinkedIn throttling); "
+            warnings.append(f"{failed} of {done} job descriptions couldn't be loaded (LinkedIn throttling); "
                             "those jobs are scored from their titles only.")
-        return selected
+        return selected[:count]
     finally:
         if own_client:
             await client.aclose()

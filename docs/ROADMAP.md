@@ -4,6 +4,41 @@
 > Every defect in §2 was reproduced against the code, not inferred from reading it.
 > Companion to [`PLAN.md`](PLAN.md) (the current design). This document is the plan for what comes next.
 
+## Status (updated 2026-10-04)
+
+| Phase | State | Notes |
+|---|---|---|
+| **0 — Fix** | **Done** | D1–D14 fixed, each with regression tests (`tests/test_ssrf.py`, `tests/test_roadmap_phase0.py`, `tests/test_deep.py`). Acceptance met: SSRF suite (loopback, metadata IP, redirect-to-private, IPv6-mapped, 6to4, bad ports, trailing-dot `localhost.`) passes; D2 fixture = 2.83 y (34 months, inclusive) within 2.75 ± 0.1. |
+| **1 — Measure** | **Started** | `eval/` harness, 6 deterministic suites, metrics, committed baseline, CI gate (`python -m eval.run --check`, also run inside pytest) and `.github/workflows/ci.yml`; LLM pre-labelling tool. **Not done:** the ≥ 300 human-reviewed match pairs and the logistic weight fit — labels must come from people (see `eval/datasets/match/README.md`). |
+| 2–6 | Not started | |
+
+**Phase 0 decisions and deviations**
+- D8: SimHash threshold kept at ≤ 3 bits (realistic near-duplicate postings measured at 3, unrelated at 36); only applied
+  within the same company + city.
+- D9: card budget is `min(250, max(ceil(count × 2.5), 30))` — the 30-card floor (3 LinkedIn pages) is an addition:
+  with small counts, `ceil(count × 2.5)` is a single page.
+- D10: unverified "partial" → "missing" (the stricter of the two options), pending eval evidence.
+- D11: implemented ahead of Phase 3 using the engine's existing requirement lines as the fixed list (the LLM
+  Requirement Extractor will replace them). Combination: verified AI verdicts replace rule verdicts per requirement,
+  the engine's normal formula recomputes the score; an unverifiable AI "missing" cannot lower a rule "met" (shown as
+  a disagreement). If the engine finds no requirement lines, the AI lists them itself ("open" mode, verified-only credit).
+- D13: `ALLOW_SERVER_KEY_ANON` defaults to false; `run.sh` sets it to true because it binds to 127.0.0.1 only.
+- **Extra fix found by the new fairness suite (§14.2):** candidate names leaked into scoring (name length shifted the
+  semantic signal by ±1 point; a candidate named "Ruby" could gain the Ruby skill). Names, pronouns and contact
+  details are now stripped before matching (`resume.strip_identity`); fairness identical-rate is 1.0 over 7 variants.
+
+**Measured backlog** (from `eval/reports/phase0-baseline.md`; fix only with the eval loop, per the core thesis)
+
+| # | Finding | Suite |
+|---|---|---|
+| F1 | Requirement bullets shorter than 15 characters ("Python", "SQL") are dropped | requirements (recall 0.71) |
+| F2 | A trailing paragraph inside a Requirements section becomes a 0-coverage requirement | requirements |
+| F3 | Postings without headings/bullets yield one giant "requirement" (no sentence split) | requirements |
+| F4 | Degree spellings missed: "BA (Hons)", "LLB", "Doctor of Philosophy", "B.S. in" (regex `\b` after a dot) | education (0.80) |
+| F5 | City aliases: NYC ↔ New York, Bangalore ↔ Bengaluru, SF Bay Area; Paris not in EMEA list | location (0.80) |
+| F6 | Open-set gap: warehouse, teaching, legal skills absent from the taxonomy (→ §6.4 ontology) | skills (recall 0.83) |
+| F7 | Negation phrasing "You don't need to know Go" missed; "APIs" alias over-fires; "Led a team" ≠ Leadership | skills |
+
 ## How to read this
 
 | If you want… | Read |

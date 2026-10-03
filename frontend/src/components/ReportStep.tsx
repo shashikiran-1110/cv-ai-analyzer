@@ -109,7 +109,7 @@ export function ReportStep({ initial, initialThreshold, notes = [], onRestart }:
         delta={extra.length ? qualifying - baseQual : 0} verified={verified} onTab={setTab} />}
       {tab === "jobs" && <>
         <div className="card deep-card">
-          <div><b><IconShield /> Deep AI check</b> <small className="muted">The AI checks each requirement against your resume and must quote evidence; the server verifies every quote. Scores become 50% deterministic + 50% AI. {verified ? `${verified} job${verified > 1 ? "s" : ""} verified.` : ""}</small></div>
+          <div><b><IconShield /> Deep AI check</b> <small className="muted">The AI re-judges each job's requirement checklist and must quote your resume; the server checks every quote exists and is relevant. Only verified AI judgements change a requirement, then the normal scoring formula is re-applied. {verified ? `${verified} job${verified > 1 ? "s" : ""} checked.` : ""}</small></div>
           <div className="actions">
             {deep.running ? <>
               <span className="muted">Verifying {deep.done}/{deep.total}…</span>
@@ -149,7 +149,7 @@ function Overview({ a, extra, threshold, setThreshold, qualifying, pct, dist, de
           <div className="stats">
             <div><span><b>{s.avg_score}</b>%</span><small>average match</small></div>
             <div><span><b>{a.jobs[0]?.score ?? 0}</b>%</span><small>best match</small></div>
-            <div><span><b>{s.resume_years || "?"}</b></span><small>yrs experience</small></div>
+            <div><span><b>{s.resume_years ? s.resume_years.toFixed(1) : "?"}</b></span><small>yrs experience</small></div>
             <div><span><b>{s.resume_skills.length}</b></span><small>skills detected</small></div>
           </div>
         </div>
@@ -222,7 +222,7 @@ function JobsTab({ jobs, threshold, onOpen }: { jobs: ScoredJob[]; threshold: nu
               <span className={`score ${scoreTone(j.score, threshold)}`}>{j.score}%</span>
               <span className="r-main">
                 <span className="job-title">{j.title}<span className={`tag ${j.score >= threshold ? "q" : "nq"}`}>{j.score >= threshold ? "Qualified" : "Below"}</span>
-                  {j.deep && <span className="tag ai" title={`AI ${j.deep.ai_score}% · rules ${j.deep.det_score}%`}>AI-verified</span>}
+                  {j.deep && <span className="tag ai" title={`Rules ${j.deep.det_score}% → ${j.deep.final_score}% with ${j.deep.verified} verified AI judgement(s)`}>AI-verified</span>}
                   {j.confidence === "low" && <span className="pill">rough</span>}</span>
                 <span className="job-sub">{[j.company, j.location, j.salary].filter(Boolean).join(" · ")}</span>
                 <span className="job-sub">
@@ -247,8 +247,8 @@ function download(name: string, mime: string, body: string) {
 }
 function exportCsv(a: Analysis, t: number) {
   const esc = (v: unknown) => { let s = String(v ?? ""); if (/^[=+\-@]/.test(s)) s = "'" + s; return `"${s.replace(/"/g, '""')}"`; };
-  const rows = [["Title", "Company", "Location", "Match %", "Rules %", "AI %", "Qualified", "Requirements met", "Missing required skills", "Blockers", "Sources", "URL"],
-    ...a.jobs.map((j) => [j.title, j.company, j.location, j.score, j.score_det ?? j.score, j.deep?.ai_score ?? "", j.score >= t ? "yes" : "no",
+  const rows = [["Title", "Company", "Location", "Match %", "Rules-only %", "AI verified reqs", "Qualified", "Requirements met", "Missing required skills", "Blockers", "Sources", "URL"],
+    ...a.jobs.map((j) => [j.title, j.company, j.location, j.score, j.score_det ?? j.score, j.deep ? `${j.deep.verified}/${j.deep.assessed}` : "", j.score >= t ? "yes" : "no",
       `${j.requirements_met}/${j.requirements.length}`, j.required_missing.join("; "), j.blockers.join("; "), j.sources.join("; "), safeUrl(j.url)])];
   download("cv-match-report.csv", "text/csv", rows.map((r) => r.map(esc).join(",")).join("\n"));
 }

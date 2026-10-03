@@ -13,4 +13,6 @@ fi
 echo
 echo "  CV Match Analyzer running at  http://localhost:${PORT}"
 echo
+# Local-only server (127.0.0.1), so a server-side AI key in the environment may be used without accounts.
+export ALLOW_SERVER_KEY_ANON="${ALLOW_SERVER_KEY_ANON:-true}"
 exec python3 -m uvicorn app.main:app --host 127.0.0.1 --port "$PORT"

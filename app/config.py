@@ -14,8 +14,16 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.6-luna")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 
 
+def server_key_allowed() -> bool:
+    """ROADMAP D13: a server-side AI key is spend anyone who can reach the server can use. Off unless explicitly
+    allowed (run.sh allows it because it binds to 127.0.0.1 only)."""
+    return os.getenv("ALLOW_SERVER_KEY_ANON", "false").strip().lower() in ("1", "true", "yes")
+
+
 def ai_provider() -> str | None:
     """'openai' | 'anthropic' | None. AI_PROVIDER forces a choice; otherwise OpenAI wins if both keys are set."""
+    if not server_key_allowed():
+        return None
     forced = os.getenv("AI_PROVIDER", "").lower()
     if forced == "openai" and os.getenv("OPENAI_API_KEY"):
         return "openai"

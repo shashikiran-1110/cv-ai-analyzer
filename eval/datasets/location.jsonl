@@ -1,0 +1,20 @@
+{"user": "US", "job": "Brussels, Belgium", "remote": null, "ok": false}
+{"user": "India", "job": "Indianapolis, IN", "remote": null, "ok": false}
+{"user": "US", "job": "Remote - US", "remote": true, "ok": true}
+{"user": "US", "job": "Austin, TX", "remote": null, "ok": true}
+{"user": "UK", "job": "Manchester", "remote": null, "ok": true}
+{"user": "London", "job": "Manchester, UK", "remote": null, "ok": false}
+{"user": "London", "job": "London, England, United Kingdom", "remote": null, "ok": true}
+{"user": "London", "job": "Greater London Area", "remote": null, "ok": true}
+{"user": "London", "job": "Remote (UK only)", "remote": true, "ok": true}
+{"user": "London", "job": "Remote - Ukraine", "remote": true, "ok": false}
+{"user": "London", "job": "Worldwide", "remote": true, "ok": true}
+{"user": "London", "job": "Remote - USA only", "remote": true, "ok": false}
+{"user": "Germany", "job": "Berlin", "remote": null, "ok": true}
+{"user": "New York", "job": "NYC", "remote": null, "ok": true}
+{"user": "New York", "job": "New York, NY", "remote": null, "ok": true}
+{"user": "Bengaluru", "job": "Bangalore, Karnataka", "remote": null, "ok": true}
+{"user": "San Francisco", "job": "SF Bay Area", "remote": null, "ok": true}
+{"user": "Remote", "job": "Remote - Europe", "remote": true, "ok": true}
+{"user": "Remote", "job": "Paris", "remote": false, "ok": false}
+{"user": "Paris", "job": "Remote - EMEA", "remote": true, "ok": true}

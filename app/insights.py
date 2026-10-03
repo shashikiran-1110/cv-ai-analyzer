@@ -53,7 +53,7 @@ def local_insights(agg: dict, results: list[dict], search: dict) -> dict:
     return {"source": "local", "strengths": strengths, "improvements": improve, "skills_to_learn": learn, "summary": ""}
 
 
-PROMPT = """You are a career coach reviewing a candidate's resume against {n} real LinkedIn postings for "{title}" in "{location}".
+PROMPT = """You are a career coach reviewing a candidate's resume against {n} real job postings (from several job boards) for "{title}" in "{location}".
 
 RESUME (may be truncated):
 <resume>

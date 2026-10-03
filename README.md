@@ -48,13 +48,16 @@ Every source runs concurrently and fails independently; results are filtered (ti
 remote-in-your-country, recency, workplace, job type, seniority), **deduplicated across sources**, ranked, and
 spread fairly so one source can't crowd out the rest.
 
-## Matching (deterministic, explainable)
+## Matching (deterministic, explainable, name-blind)
 
 `score = 40% skills + 20% requirements + 15% role fit + 15% experience + 10% semantic similarity`, minus small
 penalties for hard blockers. Requirement lines are extracted section-aware ("Requirements", "Nice to have",
 skipping benefits/company blurb) and each is marked met / partial / missing. Skills come from a ~220-skill
-taxonomy with false-positive guards ("the rest of the team" ≠ REST, "excel in" ≠ Excel). Deep AI checks blend
-50/50 with the rules score; unverifiable AI claims are downgraded.
+taxonomy with context rules ("Spring 2023" ≠ Spring, "swift turnaround" ≠ Swift), negation ("No Java required"),
+and degree context ("Scrum Master" ≠ Master's). Experience is counted in months from the Experience section only.
+Names, pronouns and contact details are removed before matching. The deep AI check re-judges the same requirement
+checklist; only verdicts backed by a quote that exists in the resume *and* relates to the requirement are used, and the
+normal formula recomputes the score.
 
 ## "Request failed"? Use **Connection check**
 
@@ -64,13 +67,21 @@ the app on your own computer. Sources that work still return results, and *Paste
 
 ## Privacy
 
+Job URLs are fetched through an SSRF guard (public http(s) hosts on ports 80/443 only, every redirect re-checked). A
+server-side AI key is ignored unless `ALLOW_SERVER_KEY_ANON=true` (`run.sh` sets it, as it listens on 127.0.0.1 only).
 AI and Adzuna keys stay in your browser and are sent only with the requests that need them; the server never
 stores or logs them and redacts them from errors. Resumes are processed in memory (1-hour sessions), never written
 to disk, and sent to your AI provider only when you use AI features.
 
-## Tests
+## Tests and evaluation
 
 ```bash
-python -m pytest              # 75 backend tests (sources, matcher, AI verification, API)
-cd frontend && npm run build  # typecheck + production build
+python -m pytest                       # 175 tests: sources, matcher, SSRF, roadmap defects D1–D14, AI verification, API
+python -m eval.run --out eval/reports/latest.md   # accuracy suites (skills, experience, education, location,
+                                                  # requirement extraction, fairness); --check fails on regressions
+cd frontend && npm run build           # typecheck + production build
 ```
+
+Scoring changes must keep `python -m eval.run --check` green (CI runs it). The roadmap and its status live in
+[`docs/ROADMAP.md`](docs/ROADMAP.md); the human-labelled match set it needs is described in
+[`eval/datasets/match/README.md`](eval/datasets/match/README.md).

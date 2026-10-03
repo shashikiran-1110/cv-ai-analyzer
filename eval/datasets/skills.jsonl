@@ -1,0 +1,40 @@
+{"kind": "resume", "text": "Spring 2023 internship with a swift turnaround on guard rails; we go agile", "skills": [], "trap": true}
+{"kind": "resume", "text": "Built microservices in Java with Spring Boot and Hibernate", "skills": ["Java", "Spring", "Microservices"]}
+{"kind": "resume", "text": "Shipped iOS apps in Swift and SwiftUI", "skills": ["iOS", "Swift", "SwiftUI"]}
+{"kind": "resume", "text": "Maintained a Ruby on Rails monolith with RSpec tests", "skills": ["Ruby", "Rails", "Unit Testing"]}
+{"kind": "resume", "text": "Sparked a culture of documentation and reviews", "skills": [], "trap": true}
+{"kind": "resume", "text": "Processed 2TB/day with PySpark on Databricks", "skills": ["Spark", "Databricks"]}
+{"kind": "resume", "text": "React and Redux frontends in TypeScript", "skills": ["React", "Redux", "TypeScript"]}
+{"kind": "resume", "text": "Reacted quickly to on-call incidents", "skills": [], "trap": true}
+{"kind": "resume", "text": "Node.js services behind Nginx on AWS", "skills": ["Node.js", "Nginx", "AWS"]}
+{"kind": "resume", "text": "Excelled at stakeholder communication", "skills": ["Communication", "Stakeholder Management"], "trap": true}
+{"kind": "resume", "text": "Advanced Excel (pivot tables, VBA) and Power BI dashboards", "skills": ["Excel", "VBA", "Power BI"]}
+{"kind": "resume", "text": "the rest of the team relied on my reports", "skills": [], "trap": true}
+{"kind": "resume", "text": "Designed RESTful APIs and GraphQL endpoints", "skills": ["REST APIs", "GraphQL"]}
+{"kind": "resume", "text": "C++ and C# game tooling; some Go (golang) services", "skills": ["C++", "C#", "Go"]}
+{"kind": "resume", "text": "Ready to go the extra mile", "skills": [], "trap": true}
+{"kind": "resume", "text": "R&D lab assistant", "skills": [], "trap": true}
+{"kind": "resume", "text": "Statistical modelling in R and Python (pandas, scikit-learn)", "skills": ["R", "Python", "Pandas", "scikit-learn", "Statistics"]}
+{"kind": "resume", "text": "Kubernetes (k8s) clusters provisioned with Terraform and Helm", "skills": ["Kubernetes", "Terraform", "Helm"]}
+{"kind": "resume", "text": "Patient care on a 30-bed surgical ward; EHR documentation in Epic", "skills": ["Patient Care", "EHR"]}
+{"kind": "resume", "text": "Month-end close, GAAP reporting and budgeting in NetSuite", "skills": ["Accounting", "Budgeting", "ERP"]}
+{"kind": "resume", "text": "Ran SEO and Google Ads campaigns; reporting in GA4", "skills": ["SEO", "Paid Social", "Google Analytics"]}
+{"kind": "resume", "text": "Figma prototypes and user research interviews", "skills": ["Figma", "Prototyping", "UX Design"]}
+{"kind": "resume", "text": "Sketched ideas on whiteboards", "skills": [], "trap": true}
+{"kind": "resume", "text": "Lean six sigma green belt", "skills": ["Six Sigma"]}
+{"kind": "resume", "text": "kept a lean team of five", "skills": [], "trap": true}
+{"kind": "resume", "text": "Led a team of six engineers and mentored juniors", "skills": ["Leadership"]}
+{"kind": "resume", "text": "Forklift operation and warehouse inventory management", "skills": ["Forklift Operation", "Inventory Management"], "note": "out-of-taxonomy domain: measures open-set gap"}
+{"kind": "resume", "text": "Taught GCSE maths; lesson planning and classroom management", "skills": ["Lesson Planning", "Classroom Management"], "note": "out-of-taxonomy domain"}
+{"kind": "resume", "text": "Drafted contracts and conducted legal research", "skills": ["Contract Drafting", "Legal Research"], "note": "out-of-taxonomy domain"}
+{"kind": "posting", "text": "No Java experience required", "skills": [], "negated": ["Java"], "trap": true}
+{"kind": "posting", "text": "Experience with Python, not Java", "skills": ["Python"], "negated": ["Java"]}
+{"kind": "posting", "text": "No prior experience required; must know Python", "skills": ["Python"], "negated": []}
+{"kind": "posting", "text": "Python and SQL (no prior Spark experience needed)", "skills": ["Python", "SQL"], "negated": ["Spark"]}
+{"kind": "posting", "text": "Java required. No Java 7 though", "skills": ["Java"], "negated": []}
+{"kind": "posting", "text": "Kotlin is a plus but not required", "skills": ["Kotlin"], "negated": [], "note": "optional, not negated"}
+{"kind": "posting", "text": "You don't need to know Go; we'll teach you", "skills": [], "negated": ["Go"]}
+{"kind": "posting", "text": "Tableau or Power BI", "skills": ["Tableau", "Power BI"], "negated": []}
+{"kind": "posting", "text": "We are an agile team that moves fast and values swift decisions", "skills": ["Agile"], "negated": []}
+{"kind": "posting", "text": "Spring/Summer 2026 internship programme for students", "skills": [], "negated": [], "trap": true}
+{"kind": "posting", "text": "Experience with Spring Framework (Java) and Kafka", "skills": ["Spring", "Java", "Kafka"], "negated": []}
