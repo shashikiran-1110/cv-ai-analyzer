@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import { useAi } from "../ai";
 
@@ -39,8 +39,7 @@ export function Header({ onDiagnose }: { onDiagnose: () => void }) {
           </ol>
         </nav>
         <div className="top-actions">
-          <button className="btn small" onClick={onDiagnose} title="Check which job sources and AI APIs the server can reach">Connection check</button>
-          <NavLink className="btn small" to="/settings">Settings</NavLink>
+          <Menu onDiagnose={onDiagnose} />
           <button className="ai-chip" onClick={() => ai.openModal(true)} title={ai.message || "Configure AI"}>
             <i className={`dot-s ${dot}`} /> {label}
           </button>
@@ -51,5 +50,31 @@ export function Header({ onDiagnose }: { onDiagnose: () => void }) {
         </div>
       </div>
     </header>
+  );
+}
+
+const LINKS: [string, string][] = [["/tracker", "Applications"], ["/watches", "Watches"], ["/market", "Market insights"], ["/settings", "Settings"]];
+
+function Menu({ onDiagnose }: { onDiagnose: () => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const path = useLocation().pathname;
+  useEffect(() => setOpen(false), [path]);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent | KeyboardEvent) => {
+      if (e instanceof KeyboardEvent ? e.key === "Escape" : !ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", close); document.addEventListener("keydown", close);
+    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", close); };
+  }, [open]);
+  return (
+    <div className="menu" ref={ref}>
+      <button className="btn small" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)} data-testid="menu">Menu ▾</button>
+      {open && <div className="menu-pop" role="menu">
+        {LINKS.map(([to, label]) => <NavLink key={to} role="menuitem" to={to}>{label}</NavLink>)}
+        <button role="menuitem" onClick={() => { setOpen(false); onDiagnose(); }}>Connection check</button>
+      </div>}
+    </div>
   );
 }

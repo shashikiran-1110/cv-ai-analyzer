@@ -47,7 +47,7 @@ def server(tmp_path_factory):
 @pytest.fixture(scope="module")
 def browser():
     with pw.sync_playwright() as p:
-        kw = {"executable_path": CHROME} if Path(CHROME).exists() else {}
+        kw = {"executable_path": CHROME} if CHROME and Path(CHROME).is_file() else {}
         try:
             b = p.chromium.launch(args=["--no-sandbox"], **kw)
         except Exception as e:      # no browser installed
@@ -181,8 +181,41 @@ def test_full_flow(server, browser, resume_pdf):
     expect(page.locator(".bubble.assistant")).to_contain_text("Where you stand", timeout=15000)
     expect(page.locator("[data-testid=unverified]")).to_contain_text("99")
 
-    # settings → export
-    page.click("a:has-text('Settings')")
+    # Phase 6: save to tracker, watch this search, kanban, watches, market
+    page.goto(report_url.split("?")[0] + "?tab=jobs")
+    page.locator(".r-head").first.click()
+    page.click("[data-testid=save-tracker]")
+    expect(page.locator(".toast", has_text="Saved to your tracker")).to_have_count(1, timeout=5000)
+    page.keyboard.press("Escape")
+    page.click("[data-testid=watch-search]")
+    expect(page.locator(".toast", has_text="Watching this search")).to_have_count(1, timeout=5000)
+    page.click("[data-testid=menu]")
+    page.click(".menu-pop a:has-text('Applications')")
+    expect(page.locator(".kcol[data-stage=saved] [data-testid=kcard]")).to_have_count(1, timeout=5000)
+    page.locator("[data-testid=kcard] button[aria-label='Move right']").first.click()
+    expect(page.locator(".kcol[data-stage=applied] [data-testid=kcard]")).to_have_count(1, timeout=5000)
+    page.reload()
+    expect(page.locator(".kcol[data-stage=applied] [data-testid=kcard]")).to_have_count(1, timeout=5000)   # persisted
+    page.click("[data-testid=menu]")
+    page.click(".menu-pop a:has-text('Watches')")
+    expect(page.locator("[data-testid=watch]")).to_have_count(1, timeout=5000)
+    page.click("[data-testid=watch] button:has-text('Run now')")
+    expect(page.locator("[data-testid=watch] .digest")).to_contain_text("new of", timeout=15000)
+    page.click("[data-testid=menu]")
+    page.click(".menu-pop a:has-text('Market insights')")
+    page.fill("input[aria-label='Role']", "Data Engineer")
+    page.click("button:has-text('Analyse')")
+    expect(page.locator("[data-testid=market]")).to_contain_text("postings", timeout=8000)
+
+    # settings: magic-link sign-in (demo shows the link), extension token, export
+    page.click("[data-testid=menu]")
+    page.click(".menu-pop a:has-text('Settings')")
+    page.fill("input[aria-label='Email']", "demo@example.com")
+    page.click("button:has-text('Email me a sign-in link')")
+    page.click("[data-testid=dev-link]")
+    expect(page.locator("[data-testid=account]")).to_contain_text("Signed in as demo@example.com", timeout=8000)
+    page.click("button:has-text('Create extension token')")
+    expect(page.locator("[data-testid=ext-token]")).to_contain_text("cvx_")
     with page.expect_download() as d:
         page.click("button:has-text('Export my data')")
     assert '"analyses"' in Path(d.value.path()).read_text()
@@ -219,3 +252,22 @@ def test_full_flow(server, browser, resume_pdf):
     assert not dialogs, dialogs
     assert not errors, errors
     ctx.close()
+
+
+def test_extension_extractor_reads_jobposting(server, browser):
+    """The extension's page reader (extension/extract.js) on a page with schema.org JobPosting, and without."""
+    page = browser.new_page()
+    ld = {"@context": "https://schema.org", "@graph": [{"@type": "WebPage"}, {"@type": "JobPosting", "title": "Data Engineer",
+          "description": "<p>Requirements</p><ul><li>Python and SQL</li></ul>" + "<p>more</p>" * 10,
+          "hiringOrganization": {"name": "Acme"}, "jobLocation": {"address": {"addressLocality": "London", "addressCountry": "GB"}}}]}
+    import json as _json
+    page.set_content(f'<html><head><script type="application/ld+json">{_json.dumps(ld)}</script></head><body><h1>x</h1></body></html>')
+    page.add_script_tag(path=str(ROOT / "extension/extract.js"))
+    job = page.evaluate("cvmExtractJob()")
+    assert job["title"] == "Data Engineer" and job["company"] == "Acme" and job["location"] == "London, GB"
+    assert "Python and SQL" in job["description"] and job["method"] == "jobposting"
+    page.set_content("<html><body><h1>Backend Engineer</h1><main>" + "We need Go and Postgres. " * 20 + "</main></body></html>")
+    page.add_script_tag(path=str(ROOT / "extension/extract.js"))
+    job = page.evaluate("cvmExtractJob()")
+    assert job["title"] == "Backend Engineer" and job["method"] == "page-text" and "Postgres" in job["description"]
+    page.close()

@@ -22,6 +22,8 @@ PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
 
 import os  # noqa: E402
 os.environ.setdefault("DATABASE_URL", f"sqlite:///{Path(__file__).resolve().parent.parent}/data/demo.db")
+os.environ.setdefault("DEV_LOGIN_LINKS", "true")       # no mail server in the demo: show sign-in links in the UI
+os.environ.setdefault("COOKIE_SECURE", "false")
 import httpx  # noqa: E402
 from fastapi import Request  # noqa: E402
 from fastapi.responses import JSONResponse, StreamingResponse  # noqa: E402
@@ -162,6 +164,10 @@ class _HttpxProxy:
 
 aggregate.httpx = _HttpxProxy(portal)                                          # source aggregator
 main.httpx = _HttpxProxy(lambda r: httpx.Response(200, text="ok"))            # connection check
+from app.api import companies as _companies  # noqa: E402
+from app.runtime import scheduler as _scheduler  # noqa: E402
+_companies.httpx = _HttpxProxy(portal)                                         # company resolver probes
+_scheduler.httpx = _HttpxProxy(portal)                                         # source canaries
 
 
 async def _demo_resolve(host, port):   # offline DNS: every hostname is "public"; IP literals are still checked

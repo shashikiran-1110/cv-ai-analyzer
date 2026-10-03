@@ -1,19 +1,21 @@
 import { useEffect, useMemo, useState } from "react";
-import { api } from "../api";
+import { api, post } from "../api";
 import type { SourceInfo } from "../types";
 
 export interface SourceConfig {
   mode: "portals" | "paste" | "sample";
   selected: string[];
-  companies: { greenhouse: string; lever: string; ashby: string };
+  companies: Record<string, string>;
   urls: string;
   adzuna: { app_id: string; app_key: string; country: string };
+  usajobs?: { email: string; key: string };
   paste: string;
 }
 export const DEFAULT_SOURCES: SourceConfig = {
   mode: "portals", selected: ["linkedin", "remotive", "remoteok", "arbeitnow", "jobicy", "himalayas", "themuse"],
-  companies: { greenhouse: "", lever: "", ashby: "" }, urls: "", adzuna: { app_id: "", app_key: "", country: "gb" }, paste: "",
+  companies: {}, urls: "", adzuna: { app_id: "", app_key: "", country: "gb" }, usajobs: { email: "", key: "" }, paste: "",
 };
+export const COMPANY_KINDS = ["greenhouse", "lever", "ashby", "smartrecruiters", "workable", "recruitee", "personio", "teamtailor", "workday"];
 const COUNTRIES = "gb us at au be br ca ch de es fr in it mx nl nz pl sg za".split(" ");
 
 export interface PastedJob { title: string; company: string; location: string; url: string; description: string }
@@ -47,19 +49,21 @@ export function sourcesProblem(c: SourceConfig): string {
   }
   if (c.mode === "sample") return "";
   if (!c.selected.length) return "Pick at least one source.";
-  for (const k of ["greenhouse", "lever", "ashby"] as const)
-    if (c.selected.includes(k) && !splitList(c.companies[k]).length) return `Add company slugs for ${k[0].toUpperCase() + k.slice(1)} or untick it.`;
+  for (const k of COMPANY_KINDS)
+    if (c.selected.includes(k) && !splitList(c.companies[k] ?? "").length) return `Add company slugs for ${k[0].toUpperCase() + k.slice(1)} or untick it.`;
   if (c.selected.includes("urls") && !splitList(c.urls).length) return "Paste at least one job URL or untick “Job URLs”.";
   if (c.selected.includes("adzuna") && !(c.adzuna.app_id && c.adzuna.app_key)) return "Enter your Adzuna App ID and Key, or untick Adzuna.";
+  if (c.selected.includes("usajobs") && !(c.usajobs?.email && c.usajobs?.key)) return "Enter your USAJOBS email and API key, or untick USAJOBS.";
   return "";
 }
 
 export function sourcesPayload(c: SourceConfig) {
   return {
     sources: c.selected,
-    companies: Object.fromEntries((["greenhouse", "lever", "ashby"] as const).filter((k) => c.selected.includes(k)).map((k) => [k, splitList(c.companies[k])])),
+    companies: Object.fromEntries(COMPANY_KINDS.filter((k) => c.selected.includes(k)).map((k) => [k, splitList(c.companies[k] ?? "")])),
     urls: c.selected.includes("urls") ? splitList(c.urls) : [],
     adzuna: c.selected.includes("adzuna") ? c.adzuna : null,
+    usajobs: c.selected.includes("usajobs") ? c.usajobs : null,
   };
 }
 
@@ -73,9 +77,10 @@ export function SourcesPicker({ value, onChange }: { value: SourceConfig; onChan
     set({ selected: want ? (has ? value.selected : [...value.selected, id]) : value.selected.filter((x) => x !== id) });
   };
   const groups = useMemo(() => ({
-    boards: list.filter((s) => s.kind === "search" && s.needs === "" || s.kind === "board"),
+    boards: list.filter((s) => (s.kind === "search" && s.needs === "") || s.kind === "board"),
     company: list.filter((s) => s.kind === "company"),
     adzuna: list.filter((s) => s.needs === "adzuna_key"),
+    usajobs: list.filter((s) => s.needs === "usajobs_key"),
     urls: list.filter((s) => s.kind === "url"),
   }), [list]);
   const pasted = value.mode === "paste" ? parsePasted(value.paste) : [];
@@ -100,13 +105,18 @@ export function SourcesPicker({ value, onChange }: { value: SourceConfig; onChan
           ))}
         </div>
         <h3 className="sec">Company career boards <small>(official ATS APIs, e.g. stripe, airbnb)</small></h3>
+        <CompanyFinder onAdd={(kind, slug) => {
+          const cur = splitList(value.companies[kind] ?? "");
+          onChange({ ...value, companies: { ...value.companies, [kind]: [...new Set([...cur, slug])].join(", ") },
+            selected: value.selected.includes(kind) ? value.selected : [...value.selected, kind] });
+        }} />
         <div className="src-grid">
           {groups.company.map((s) => {
-            const k = s.id as "greenhouse" | "lever" | "ashby";
+            const k = s.id;
             return (
               <div key={s.id} className={`src col ${value.selected.includes(s.id) ? "on" : ""}`}>
                 <label className="check"><input type="checkbox" checked={value.selected.includes(s.id)} onChange={() => toggle(s.id)} /><b>{s.name}</b></label>
-                <input placeholder="company slugs, comma-separated" value={value.companies[k]} aria-label={`${s.name} company slugs`}
+                <input placeholder="company slugs, comma-separated" value={value.companies[k] ?? ""} aria-label={`${s.name} company slugs`}
                   onChange={(e) => { onChange({ ...value, companies: { ...value.companies, [k]: e.target.value }, selected: e.target.value.trim() && !value.selected.includes(s.id) ? [...value.selected, s.id] : value.selected }); }} />
                 <small>{s.note}</small>
               </div>
@@ -125,6 +135,16 @@ export function SourcesPicker({ value, onChange }: { value: SourceConfig; onChan
                 </select>
               </div>
               <small>{s.note}. Get a key at <a href="https://developer.adzuna.com" target="_blank" rel="noopener noreferrer">developer.adzuna.com</a>.</small>
+            </div>
+          ))}
+          {groups.usajobs.map((s) => (
+            <div key={s.id} className={`src col ${value.selected.includes(s.id) ? "on" : ""}`}>
+              <label className="check"><input type="checkbox" checked={value.selected.includes(s.id)} onChange={() => toggle(s.id)} /><b>{s.name}</b><em className="mini">official · free key</em></label>
+              <div className="key-row">
+                <input placeholder="Your email" value={value.usajobs?.email ?? ""} aria-label="USAJOBS email" onChange={(e) => set({ usajobs: { key: value.usajobs?.key ?? "", email: e.target.value } })} />
+                <input placeholder="API key" type="password" value={value.usajobs?.key ?? ""} aria-label="USAJOBS API key" onChange={(e) => set({ usajobs: { email: value.usajobs?.email ?? "", key: e.target.value } })} />
+              </div>
+              <small>{s.note}.</small>
             </div>
           ))}
           {groups.urls.map((s) => (
@@ -147,6 +167,38 @@ export function SourcesPicker({ value, onChange }: { value: SourceConfig; onChan
         </div>
       )}
       {value.mode === "sample" && <p className="muted">Uses 14 built-in <b>sample</b> postings from fictional companies to try the app end to end without any network access. Not real jobs.</p>}
+    </div>
+  );
+}
+
+type Board = { kind: string; slug: string; jobs: number | null };
+
+/** Company resolver (ROADMAP §4.2): type a company, we find its public ATS board. */
+function CompanyFinder({ onAdd }: { onAdd: (kind: string, slug: string) => void }) {
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [res, setRes] = useState<{ name: string; boards: Board[]; note?: string } | null>(null);
+  const [err, setErr] = useState("");
+  async function find(refresh = false) {
+    if (name.trim().length < 2) return;
+    setBusy(true); setErr("");
+    try { setRes(await post("/api/companies/resolve", { name: name.trim(), refresh })); }
+    catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  }
+  return (
+    <div className="finder">
+      <div className="plan-row">
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Find a company's job board, e.g. Stripe" aria-label="Company name"
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void find(); } }} />
+        <button type="button" className="btn small" onClick={() => find()} disabled={busy || name.trim().length < 2}>{busy ? "Looking…" : "Find"}</button>
+      </div>
+      {err && <small className="warn-text">{err}</small>}
+      {res && <div className="chips" data-testid="finder">
+        {res.boards.map((b) => <button type="button" key={b.kind} className="chip clickable ok" onClick={() => onAdd(b.kind, b.slug)}>
+          + {b.kind}: {b.slug}{b.jobs != null ? ` (${b.jobs} jobs)` : ""}</button>)}
+        {!res.boards.length && <small className="muted">{res.note}</small>}
+        <button type="button" className="link small" onClick={() => find(true)}>Check again</button>
+      </div>}
     </div>
   );
 }

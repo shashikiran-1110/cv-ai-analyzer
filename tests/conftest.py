@@ -60,7 +60,16 @@ def isolated_state(tmp_path, monkeypatch):
     from app.runtime import ratelimit
     from app.runtime.events import bus
     from app.sources import base
-    db.reset(f"sqlite:///{tmp_path}/test.db")
+    import os
+    pg = os.getenv("TEST_DATABASE_URL")          # e.g. postgresql+psycopg://user@127.0.0.1:5432/cvtest
+    if pg:
+        db.reset(pg)
+        db.meta.drop_all(db.engine())
+        db.meta.create_all(db.engine())
+    else:
+        db.reset(f"sqlite:///{tmp_path}/test.db")
+    from app.api import accounts
+    accounts._cache.clear()
     ratelimit.reset()
     base.FEED_CACHE.clear()
     bus.runs.clear()

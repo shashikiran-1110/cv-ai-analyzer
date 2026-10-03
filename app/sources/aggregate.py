@@ -12,6 +12,7 @@ import httpx
 
 from ..jobmodel import Job
 from ..textutil import age_hours
+from ..runtime import metrics
 from .base import UA, JobQuery, Source, SourceError
 
 log = logging.getLogger("sources")
@@ -293,6 +294,8 @@ async def run(q: JobQuery, sources: list[Source], on_update: Optional[StatsCb] =
             else:
                 jobs = await asyncio.wait_for(src.fetch(q, client), src.timeout)
             st.update(status="done", fetched=len(jobs))
+            metrics.inc("source_fetch_total", source=src.id, outcome="ok")
+            metrics.inc("source_jobs_total", len(jobs), source=src.id, stage="fetched")
             for j in jobs:
                 for w in j.extra.pop("_warnings", []):
                     warnings.append(f"{src.name}: {w}")
@@ -301,8 +304,10 @@ async def run(q: JobQuery, sources: list[Source], on_update: Optional[StatsCb] =
                     j.source = src.id
             return jobs
         except asyncio.TimeoutError:
+            metrics.inc("source_fetch_total", source=src.id, outcome="timeout")
             st.update(status="error", message=f"{src.name} took too long to respond (timeout).")
         except SourceError as e:
+            metrics.inc("source_fetch_total", source=src.id, outcome=e.kind)
             st.update(status="error", message=str(e), kind=e.kind)
         except Exception as e:  # a broken source must never break the search
             log.exception("source %s failed", src.id)

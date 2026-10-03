@@ -1,0 +1,27 @@
+# Single-VM deployment (ROADMAP §12): API (+ in-process scheduler for watches and source canaries) and Postgres.
+#   cp .env.example .env   # fill in what you need
+#   docker compose up -d --build   → http://localhost:8000
+services:
+  api:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://cvmatch:${POSTGRES_PASSWORD:-cvmatch}@db:5432/cvmatch
+    ports: ["8000:8000"]
+    depends_on:
+      db: { condition: service_healthy }
+    restart: unless-stopped
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: cvmatch
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cvmatch}
+      POSTGRES_DB: cvmatch
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cvmatch"]
+      interval: 5s
+      retries: 20
+    restart: unless-stopped
+volumes:
+  pgdata:

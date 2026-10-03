@@ -10,7 +10,7 @@ from ..jobmodel import Job
 from ..textutil import html_to_text, parse_date
 from .base import JobQuery, Source, SourceError, get
 
-SLUG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$")
+SLUG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$|^[a-z0-9-]{1,60}/wd\d{1,2}/[A-Za-z0-9_-]{1,80}$")   # 2nd: Workday
 
 
 def _nice(slug: str) -> str:

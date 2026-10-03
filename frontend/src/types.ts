@@ -127,3 +127,21 @@ export interface PracticeFeedback {
 }
 export interface PracticeEntry { question_id: string; question: string; answer: string; feedback: PracticeFeedback; at: number }
 export interface PracticeHistory { questions: PracticeQuestion[]; answers: PracticeEntry[] }
+export interface Me { user: { id: string; email: string } | null; kind: "user" | "anonymous"; email_delivery: string; retention_days: number }
+export interface TrackerItem {
+  id: string; job_id: string; analysis_id: string; stage: string; title: string; company: string; location: string; url: string;
+  score: number | null; notes: string; source?: string; history: { stage: string; at: number }[]; created_at: number; updated_at: number;
+}
+export interface DigestMatch { job_id: string; title: string; company: string; url: string; location: string; score: number; gates_failed: string[]; qualifies: boolean }
+export interface Digest { id?: number; created_at: number; searched: number; new: number; qualifying: number; matches: DigestMatch[]; emailed?: boolean; resume_missing?: boolean }
+export interface Watch {
+  id: string; query: { title: string; location: string; sources: string[] }; threshold: number; frequency: "daily" | "weekly";
+  email: boolean; active: boolean; last_run_at: number | null; next_run_at: number; latest?: Digest | null;
+}
+export interface MarketStats {
+  title: string; location: string; days: number; jobs: number; note?: string;
+  top_skills?: { skill: string; category: string; jobs: number; pct: number }[]; years_asked?: { years: number; jobs: number }[];
+  median_years_asked?: number | null; remote_pct?: number; top_companies?: { company: string; jobs: number }[];
+  top_locations?: { location: string; jobs: number }[]; sources?: Record<string, number>; weekly_new?: { week: string; jobs: number }[];
+  salary?: { currency: string; postings: number; median_yearly: number; p25: number; p75: number }[]; salary_note?: string;
+}

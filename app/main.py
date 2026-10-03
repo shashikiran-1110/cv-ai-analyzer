@@ -35,7 +35,10 @@ from .understanding import requirements as req_extract, resume_parse
 from .agents import coach, interview, planner, tailoring
 from .ai import guard
 from . import docx_export
+from .api import accounts, companies, ext, market, ops, tracker, watches
+from .runtime import logs as runtime_logs, metrics, scheduler
 
+runtime_logs.setup()
 log = logging.getLogger("app")
 app = FastAPI(title="CV AI Analyzer")
 DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
@@ -58,9 +61,11 @@ class SearchRequest(BaseModel):
     workplace: list[Literal["on_site", "remote", "hybrid"]] = []
     sort: Literal["recent", "relevant"] = "recent"
     sources: list[str] = Field(default=["linkedin"], min_length=1, max_length=20)
-    companies: dict[Literal["greenhouse", "lever", "ashby"], list[str]] = {}
+    companies: dict[Literal["greenhouse", "lever", "ashby", "smartrecruiters", "workable", "recruitee", "personio",
+                            "teamtailor", "workday"], list[str]] = {}
     urls: list[str] = Field(default=[], max_length=25)
     adzuna: Optional[dict[str, str]] = None
+    usajobs: Optional[dict[str, str]] = None
     strict: bool = True
     alt_titles: list[str] = Field(default=[], max_length=12)
     exclude_titles: list[str] = Field(default=[], max_length=12)
@@ -125,14 +130,34 @@ CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';
        "connect-src 'self'; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
 
 
+EXT_ORIGINS = ("chrome-extension://", "moz-extension://")
+
+
 @app.middleware("http")
 async def owner_and_headers(request: Request, call_next):
+    origin = request.headers.get("origin", "")
+    ext_call = request.url.path.startswith("/api/ext/") and origin.startswith(EXT_ORIGINS)
+    if ext_call and request.method == "OPTIONS":           # CORS preflight from the browser extension only
+        return Response(status_code=204, headers={"Access-Control-Allow-Origin": origin, "Access-Control-Allow-Methods": "POST",
+                                                  "Access-Control-Allow-Headers": "content-type, x-ext-token", "Access-Control-Max-Age": "600"})
+    t0 = time.perf_counter()
     sid = request.cookies.get(OWNER_COOKIE, "")
     new = not (20 <= len(sid) <= 64 and sid.replace("-", "").replace("_", "").isalnum())
     if new:
         sid = secrets.token_urlsafe(24)
-    request.state.owner = sid
+    u = None
+    if request.url.path.startswith("/api/") and request.cookies.get(accounts.SESSION_COOKIE):
+        u = await run_in_threadpool(accounts.session_user, request.cookies[accounts.SESSION_COOKIE])
+    request.state.user = u
+    request.state.owner = f"u:{u['id']}" if u else sid             # signed in: data belongs to the account
     resp = await call_next(request)
+    route = getattr(request.scope.get("route"), "path", "") or ("spa" if not request.url.path.startswith("/api/") else "unmatched")
+    metrics.inc("http_requests_total", method=request.method, route=route, status=resp.status_code)
+    metrics.inc("http_request_seconds_sum", time.perf_counter() - t0, route=route)
+    metrics.inc("http_request_seconds_count", route=route)
+    if ext_call:
+        resp.headers["Access-Control-Allow-Origin"] = origin
+        resp.headers["Vary"] = "Origin"
     if new:
         resp.set_cookie(OWNER_COOKIE, sid, max_age=int(db.retention_seconds()), httponly=True, samesite="lax",
                         secure=os.getenv("COOKIE_SECURE", "false").lower() == "true")
@@ -164,8 +189,16 @@ async def lifespan(_app: FastAPI):
     db.engine()
     t = asyncio.create_task(_purge_loop())
     _TASKS.add(t)
+    stop = asyncio.Event()
+    sched = None
+    if os.getenv("SCHEDULER", "on").lower() != "off":       # watches + source canaries (ROADMAP Phase 6)
+        sched = asyncio.create_task(scheduler.loop(stop))
+        _TASKS.add(sched)
     yield
+    stop.set()
     t.cancel()
+    if sched:
+        sched.cancel()
 
 
 app.router.lifespan_context = lifespan
@@ -273,7 +306,7 @@ async def _persist_search(sid: str, final: Optional[str] = None) -> None:
 
 
 def _search_cache_key(req: "SearchRequest", hours: Optional[int]) -> str:
-    q = req.model_dump(exclude={"adzuna", "custom_hours", "time_range"})
+    q = req.model_dump(exclude={"adzuna", "usajobs", "custom_hours", "time_range"})
     q["hours"] = hours
     q["adzuna_app"] = (req.adzuna or {}).get("app_id", "") if "adzuna" in req.sources else ""
     return hashlib.sha256(json.dumps(q, sort_keys=True).encode()).hexdigest()
@@ -284,7 +317,7 @@ async def _run_search(sid: str, req: SearchRequest, hours: Optional[int]) -> Non
     q = src.JobQuery(title=req.title.strip(), location=req.location.strip(), count=req.count, hours=hours,
                      experience=list(req.experience), job_types=list(req.job_types), workplace=list(req.workplace),
                      sort=req.sort, companies={k: v for k, v in req.companies.items()}, urls=req.urls,
-                     adzuna=req.adzuna, strict=req.strict,
+                     adzuna=req.adzuna, usajobs=req.usajobs, strict=req.strict,
                      alt_titles=[t.strip()[:80] for t in req.alt_titles if t.strip()],
                      exclude_titles=[t.strip()[:80] for t in req.exclude_titles if t.strip()])
     chosen = [src.BY_ID[i] for i in dict.fromkeys(req.sources)]
@@ -331,12 +364,14 @@ async def start_search(req: SearchRequest, request: Request):
         raise HTTPException(422, f"Unknown source(s): {', '.join(unknown)}")
     if "urls" in req.sources and not any(u.strip() for u in req.urls):
         raise HTTPException(422, "Paste at least one job URL, or untick “Job URLs”.")
-    for kind in ("greenhouse", "lever", "ashby"):
+    for kind in ("greenhouse", "lever", "ashby", "smartrecruiters", "workable", "recruitee", "personio", "teamtailor", "workday"):
         if kind in req.sources and not any(x.strip() for x in req.companies.get(kind, [])):
             raise HTTPException(422, f"Add at least one company for {src.BY_ID[kind].name}, or untick it.")
     if "adzuna" in req.sources and not (req.adzuna and req.adzuna.get("app_id") and req.adzuna.get("app_key")):
         raise HTTPException(422, "Adzuna needs an App ID and App Key (free at developer.adzuna.com), or untick it.")
-    query = {**req.model_dump(exclude={"adzuna"}), "title": req.title.strip(), "location": req.location.strip(), "hours": hours}
+    if "usajobs" in req.sources and not (req.usajobs and req.usajobs.get("email") and req.usajobs.get("key")):
+        raise HTTPException(422, "USAJOBS needs your email and a free API key (developer.usajobs.gov), or untick it.")
+    query = {**req.model_dump(exclude={"adzuna", "usajobs"}), "title": req.title.strip(), "location": req.location.strip(), "hours": hours}
     key = _search_cache_key(req, hours)
     cached = await run_in_threadpool(db.find_cached_search, key, float(os.getenv("SEARCH_CACHE_TTL", "1800")))
     if cached:                         # same search recently: reuse its jobs instantly (ROADMAP Phase 2)
@@ -1143,6 +1178,11 @@ async def interview_answer(aid: str, job_id: str, body: PracticeAnswer, request:
     hist["answers"] = hist["answers"][-50:]
     await run_in_threadpool(db.kv_set, f"practice:{aid}:{job_id}", hist, db.retention_seconds())
     return entry
+
+
+# ---------- Phase 6 routers ----------
+for _r in (accounts.router, tracker.router, watches.router, companies.router, market.router, ext.router, ops.router):
+    app.include_router(_r)
 
 
 # ---------- frontend ----------

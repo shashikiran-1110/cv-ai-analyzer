@@ -18,7 +18,7 @@ _buckets: dict[tuple[str, str], Bucket] = {}
 
 
 def _limit(name: str) -> float:
-    defaults = {"search": "30", "ai": "120", "upload": "60"}
+    defaults = {"search": "30", "ai": "120", "upload": "60", "auth": "10", "ext": "600"}
     return float(os.getenv(f"RATE_LIMIT_{name.upper()}_PER_HOUR", defaults.get(name, "60")))
 
 

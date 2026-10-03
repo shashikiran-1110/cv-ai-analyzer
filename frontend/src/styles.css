@@ -386,3 +386,47 @@ mark.pl.flash { animation: flash 1.1s ease-in-out 2; }
 /* keep the header on one row on laptops: compact the step labels and the AI chip before wrapping */
 @media (max-width: 1360px) { .ai-chip { max-width: 170px; } .stepper em { font-size: .8rem; } }
 @media (max-width: 1180px) { .stepper em { display: none; } }
+.finder { display: grid; gap: 6px; margin-bottom: 10px; }
+
+/* ---------- header menu ---------- */
+.menu { position: relative; }
+.menu-pop { position: absolute; right: 0; top: calc(100% + 6px); min-width: 200px; display: grid; padding: 6px; border-radius: 14px; z-index: 20;
+  background: var(--card-solid, var(--card)); border: 1px solid var(--line); box-shadow: var(--shadow-lift, var(--shadow)); animation: rise .18s ease both; }
+.menu-pop a, .menu-pop button { text-align: left; padding: 9px 12px; border-radius: 10px; color: var(--ink); text-decoration: none; background: none; border: 0; font: inherit; font-size: .9rem; cursor: pointer; }
+.menu-pop a:hover, .menu-pop button:hover, .menu-pop a.active { background: var(--brand-soft); color: var(--brand); }
+
+/* ---------- tracker kanban ---------- */
+.kanban { display: grid; grid-template-columns: repeat(5, minmax(170px, 1fr)); gap: 12px; overflow-x: auto; padding-bottom: 8px; }
+@media (max-width: 900px) { .kanban { grid-template-columns: repeat(5, 78vw); scroll-snap-type: x mandatory; } .kcol { scroll-snap-align: start; } }
+.kcol { background: color-mix(in srgb, var(--card-solid, var(--card)) 55%, transparent); border: 1px dashed var(--line); border-radius: 16px; padding: 10px; min-height: 160px; transition: background .2s, border-color .2s; }
+.kcol.over { border-color: var(--brand); background: var(--brand-soft); }
+.kcol h2 { font-size: .9rem; display: flex; justify-content: space-between; margin: 2px 4px 10px; }
+.kcol .count { color: var(--muted); font-weight: 600; }
+.kcard { background: var(--card-solid, var(--card)); border: 1px solid var(--line); border-radius: 12px; padding: 10px; margin-bottom: 8px; cursor: grab; box-shadow: var(--shadow); transition: transform .15s, box-shadow .15s, opacity .15s; animation: rise .3s ease both; }
+.kcard:hover { transform: translateY(-2px); }
+.kcard.dragging { opacity: .45; }
+.kcard-top { display: flex; gap: 8px; align-items: flex-start; } .kcard-top small { display: block; }
+.kcard-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+.kcard-notes { display: grid; gap: 6px; margin-top: 8px; }
+.icon-btn { border: 1px solid var(--line); background: transparent; color: var(--ink); border-radius: 8px; width: 28px; height: 28px; cursor: pointer; }
+.icon-btn:disabled { opacity: .35; cursor: default; }
+.score.small { font-size: .75rem; min-width: 40px; height: 26px; padding: 0 6px; }
+.empty-state { text-align: center; padding: 30px; }
+
+/* ---------- watches & market ---------- */
+.watch.paused { opacity: .7; }
+.watch-head { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: flex-start; }
+.watch-head select { width: auto; min-height: 34px; padding: 4px 8px; }
+.digest-list { list-style: none; padding: 0; margin: 6px 0 0; display: grid; gap: 6px; }
+.digest-list li { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.market-form { display: grid; grid-template-columns: 2fr 1.5fr auto auto; gap: 8px; align-items: center; }
+@media (max-width: 700px) { .market-form { grid-template-columns: 1fr; } }
+.stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+@media (max-width: 700px) { .stats-row { grid-template-columns: repeat(2, 1fr); } }
+.stat { text-align: center; } .stat b { display: block; font-size: 1.8rem; }
+.weeks { display: flex; align-items: flex-end; gap: 6px; height: 110px; margin-bottom: 12px; }
+.weeks div { display: grid; justify-items: center; gap: 4px; flex: 1; }
+.weeks i { width: 100%; max-width: 28px; border-radius: 6px 6px 2px 2px; background: linear-gradient(var(--brand), color-mix(in srgb, var(--brand) 40%, transparent)); animation: grow .6s ease both; transform-origin: bottom; }
+@keyframes grow { from { transform: scaleY(0); } }
+.token code { word-break: break-all; }
+@media (prefers-reduced-motion: reduce) { .kcard, .weeks i, .menu-pop { animation: none; } }

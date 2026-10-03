@@ -25,6 +25,7 @@ class JobQuery:
     companies: dict[str, list[str]] = field(default_factory=dict)   # {"greenhouse": [...], "lever": [...], "ashby": [...]}
     urls: list[str] = field(default_factory=list)
     adzuna: Optional[dict] = None                                    # {"app_id", "app_key", "country"}
+    usajobs: Optional[dict] = None                                   # {"email", "key"} (free key from developer.usajobs.gov)
     strict: bool = True                                              # require the job title to match the query
     alt_titles: list[str] = field(default_factory=list)              # Search Planner: other titles that also count
     exclude_titles: list[str] = field(default_factory=list)          # …and titles to drop ("sales engineer")
@@ -76,14 +77,21 @@ async def get(client: httpx.AsyncClient, url: str, params: Optional[dict] = None
     return data
 
 
+async def post_json(client: httpx.AsyncClient, url: str, body: dict, *, name: str, headers: Optional[dict] = None) -> Any:
+    """POST JSON with the same retry/error mapping as `get` (e.g. Workday's career-site search)."""
+    return await _get_uncached(client, url, None, name=name, headers=headers, json_body=body)
+
+
 async def _get_uncached(client: httpx.AsyncClient, url: str, params: Optional[dict] = None, *, name: str,
-                        retries: int = 3, headers: Optional[dict] = None, as_json: bool = True) -> Any:
+                        retries: int = 3, headers: Optional[dict] = None, as_json: bool = True,
+                        json_body: Optional[dict] = None) -> Any:
     host = httpx.URL(url).host
     delay = 1.0
     last = ""
     for attempt in range(retries):
         try:
-            r = await client.get(url, params=params, headers=headers)
+            r = await (client.post(url, json=json_body, headers=headers) if json_body is not None
+                       else client.get(url, params=params, headers=headers))
         except (httpx.ProxyError, httpx.ConnectError, httpx.ConnectTimeout) as e:
             raise SourceError(f"Can't connect to {host} ({type(e).__name__}). A firewall, proxy or sandbox "
                               f"network policy is blocking it; allow {host} or run the app on your own computer.",

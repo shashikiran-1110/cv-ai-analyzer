@@ -1,0 +1,12 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="popup.css"><title>CV Match – settings</title></head>
+<body style="width:auto;max-width:520px;margin:24px auto">
+  <main>
+    <h2>CV Match Analyzer extension</h2>
+    <label>Server URL<br><input id="server" style="width:100%" placeholder="http://localhost:8000"></label>
+    <label>Extension token<br><input id="token" style="width:100%" placeholder="cvx_…" type="password"></label>
+    <small class="muted">Create a token in the app: Settings → Browser extension. For a server other than localhost, the browser will ask you to allow access to it.</small>
+    <button id="save">Save</button> <span id="msg" class="muted"></span>
+  </main>
+  <script src="options.js"></script>
+</body></html>

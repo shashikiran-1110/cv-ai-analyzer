@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "CV Match Analyzer – Score this job",
+  "version": "1.0.0",
+  "description": "Score the job posting you're viewing against your resume in your own CV Match Analyzer, and save it to your tracker.",
+  "action": { "default_popup": "popup.html", "default_title": "Score this job" },
+  "options_page": "options.html",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": ["http://localhost:8000/*", "http://127.0.0.1:8000/*"],
+  "optional_host_permissions": ["https://*/*", "http://*/*"],
+  "content_security_policy": { "extension_pages": "script-src 'self'; object-src 'none'" }
+}

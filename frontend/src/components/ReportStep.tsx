@@ -160,6 +160,10 @@ export function ReportStep({ initial, notes = [] }: { initial: Analysis; notes?:
           <p className="lead">{n} postings for “{a.query.title}”{a.query.location ? ` in ${a.query.location}` : ""} · {Object.entries(a.summary.by_source).map(([k, v]) => `${sourceName(k)} ${v}`).join(" · ")}</p></div>
         <div className="actions">
           <button className="btn" onClick={onRestart}>← Change setup</button>
+          <button className="btn" data-testid="watch-search" onClick={async () => {
+            try { await post(`/api/watches`, { analysis_id: a.analysis_id, threshold, frequency: "daily" }); toast("Watching this search: new matches will appear under Watches.", "ok"); }
+            catch (e) { toast((e as Error).message, "error"); }
+          }}>🔔 Watch this search</button>
           <button className="btn" onClick={() => exportCsv(a, threshold)}>CSV</button>
           <button className="btn" onClick={() => exportJson(a, threshold)}>JSON</button>
           <button className="btn" onClick={() => window.print()}>Print</button>

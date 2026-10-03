@@ -18,6 +18,9 @@ const ProfilePage = lazy(() => import("./pages/ProfilePage").then((m) => ({ defa
 const SettingsPage = lazy(() => import("./pages/SettingsPage").then((m) => ({ default: m.SettingsPage })));
 const TailorPage = lazy(() => import("./pages/TailorPage").then((m) => ({ default: m.TailorPage })));
 const InterviewPage = lazy(() => import("./pages/InterviewPage").then((m) => ({ default: m.InterviewPage })));
+const TrackerPage = lazy(() => import("./pages/TrackerPage").then((m) => ({ default: m.TrackerPage })));
+const WatchesPage = lazy(() => import("./pages/WatchesPage").then((m) => ({ default: m.WatchesPage })));
+const MarketPage = lazy(() => import("./pages/MarketPage").then((m) => ({ default: m.MarketPage })));
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } } });
 
 function Shell() {
@@ -50,6 +53,9 @@ function Shell() {
             <Route path="/analysis/:aid/interview/:jobId" element={<InterviewPage />} />
             <Route path="/profile/:rid" element={<ProfilePage />} />
             <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/tracker" element={<TrackerPage />} />
+            <Route path="/watches" element={<WatchesPage />} />
+            <Route path="/market" element={<MarketPage />} />
             <Route path="*" element={<section className="enter"><h1>Page not found</h1><Link className="btn" to="/">Go to setup</Link></section>} />
           </Routes>
           </Suspense>

@@ -62,6 +62,33 @@ llm_calls = Table("llm_calls", meta,
                   Column("cache_write_tokens", Integer), Column("cost_usd", Float), Column("latency_ms", Integer),
                   Column("status", String(20)), Column("cache_hit", Integer), Column("created_at", Float, index=True))
 
+# ---------- Phase 6: accounts, tracker, watches, companies, extension ----------
+users = Table("users", meta, Column("id", String(32), primary_key=True), Column("email", String(320), unique=True),
+              Column("created_at", Float, nullable=False), Column("last_login", Float))
+sessions = Table("sessions", meta, Column("token_hash", String(64), primary_key=True),
+                 Column("user_id", String(32), index=True), Column("created_at", Float), Column("expires_at", Float, index=True))
+login_tokens = Table("login_tokens", meta, Column("token_hash", String(64), primary_key=True), Column("email", String(320)),
+                     Column("anon_owner", String(64)), Column("expires_at", Float), Column("used", Integer, default=0))
+applications = Table("applications", meta,
+                     Column("id", String(32), primary_key=True), Column("owner", String(64), index=True),
+                     Column("job_id", String(200)), Column("analysis_id", String(32)), Column("stage", String(20), nullable=False),
+                     Column("data", Text, nullable=False),        # title, company, url, location, score, notes, edits, letter
+                     Column("created_at", Float, nullable=False), Column("updated_at", Float, nullable=False))
+watches = Table("watches", meta,
+                Column("id", String(32), primary_key=True), Column("owner", String(64), index=True),
+                Column("query", Text, nullable=False), Column("resume_id", String(32)), Column("threshold", Integer),
+                Column("frequency", String(10)), Column("email", String(320)), Column("active", Integer, default=1),
+                Column("last_run_at", Float), Column("next_run_at", Float, index=True), Column("created_at", Float))
+watch_seen = Table("watch_seen", meta, Column("watch_id", String(32), primary_key=True),
+                   Column("job_id", String(200), primary_key=True), Column("first_seen", Float))
+digests = Table("digests", meta, Column("id", Integer, primary_key=True, autoincrement=True),
+                Column("watch_id", String(32), index=True), Column("created_at", Float), Column("data", Text),
+                Column("emailed", Integer, default=0))
+companies = Table("companies", meta, Column("name_norm", String(200), primary_key=True), Column("name", String(200)),
+                  Column("boards", Text), Column("checked_at", Float))
+ext_tokens = Table("ext_tokens", meta, Column("token_hash", String(64), primary_key=True), Column("owner", String(64), index=True),
+                   Column("created_at", Float), Column("last_used", Float))
+
 Index("ix_jobs_company_title", jobs.c.company, jobs.c.title)
 
 _engine: Optional[Engine] = None
@@ -106,6 +133,14 @@ def loads(v: Optional[str], default: Any = None) -> Any:
 
 def retention_seconds() -> float:
     return float(os.getenv("ANON_RETENTION_DAYS", "7")) * 86400
+
+
+def expiry(owner: str, base: Optional[float] = None) -> float:
+    """Anonymous data expires after ANON_RETENTION_DAYS; signed-in users' after USER_RETENTION_DAYS (default 365)."""
+    base = time.time() if base is None else base
+    if owner.startswith("u:"):
+        return base + float(os.getenv("USER_RETENTION_DAYS", "365")) * 86400
+    return base + retention_seconds()
 
 
 # ---------- searches & jobs ----------
@@ -182,7 +217,7 @@ def save_analysis(aid: str, a: dict, owner: str = "") -> None:
             id=aid, owner=owner or a.get("owner", ""), search_id=a.get("search_id"), resume_id=a.get("resume_id"),
             query=dumps(a.get("query")), extra=dumps(a.get("extra", [])), years=a.get("years"),
             result=dumps(a.get("result")), deep=dumps(a.get("deep", {})), job_ids=dumps([j["id"] for j in a["jobs_full"]]),
-            created_at=a.get("created", now), expires_at=a.get("created", now) + retention_seconds()))
+            created_at=a.get("created", now), expires_at=expiry(owner or a.get("owner", ""), now)))
 
 
 def load_analysis(aid: str) -> Optional[dict]:
@@ -205,14 +240,14 @@ def save_resume(rid: str, text: str, sha: str, owner: str = "", profile: Any = N
     now = time.time()
     with engine().begin() as c:
         if c.execute(select(resumes.c.id).where(resumes.c.id == rid)).first():
-            vals = {"text": text, "expires_at": now + retention_seconds()}
+            vals = {"text": text, "expires_at": expiry(owner, now)}
             if profile is not None:
                 vals["profile"] = dumps(profile)
             c.execute(update(resumes).where(resumes.c.id == rid).values(**vals))
         else:
             c.execute(insert(resumes).values(id=rid, owner=owner, sha256=sha, text=text,
                                              profile=dumps(profile) if profile is not None else None,
-                                             created_at=now, expires_at=now + retention_seconds()))
+                                             created_at=now, expires_at=expiry(owner, now)))
 
 
 def load_resume(rid: str) -> Optional[dict]:
@@ -266,11 +301,17 @@ def export_owner(owner: str) -> dict:
                                           .where(analyses.c.owner == owner)).mappings()]
         se = [dict(x) for x in c.execute(select(searches.c.id, searches.c.query, searches.c.created_at)
                                           .where(searches.c.owner == owner)).mappings()]
+        apps = [dict(x) for x in c.execute(select(applications).where(applications.c.owner == owner)).mappings()]
+        ws = [dict(x) for x in c.execute(select(watches).where(watches.c.owner == owner)).mappings()]
     for r in res:
         r["profile"], r["corrections"] = loads(r["profile"]), loads(r["corrections"], {})
     for x in an + se:
         x["query"] = loads(x["query"], {})
-    return {"resumes": res, "analyses": an, "searches": se}
+    for x in apps:
+        x["data"] = loads(x["data"], {})
+    for x in ws:
+        x["query"] = loads(x["query"], {})
+    return {"resumes": res, "analyses": an, "searches": se, "applications": apps, "watches": ws}
 
 
 def delete_owner(owner: str) -> dict:
@@ -278,7 +319,30 @@ def delete_owner(owner: str) -> dict:
         a = c.execute(delete(analyses).where(analyses.c.owner == owner)).rowcount
         r = c.execute(delete(resumes).where(resumes.c.owner == owner)).rowcount
         s = c.execute(delete(searches).where(searches.c.owner == owner)).rowcount
-    return {"analyses": a, "resumes": r, "searches": s}
+        t = c.execute(delete(applications).where(applications.c.owner == owner)).rowcount
+        wids = [x.id for x in c.execute(select(watches.c.id).where(watches.c.owner == owner))]
+        if wids:
+            c.execute(delete(watch_seen).where(watch_seen.c.watch_id.in_(wids)))
+            c.execute(delete(digests).where(digests.c.watch_id.in_(wids)))
+        w = c.execute(delete(watches).where(watches.c.owner == owner)).rowcount
+        c.execute(delete(ext_tokens).where(ext_tokens.c.owner == owner))
+        c.execute(delete(llm_calls).where(llm_calls.c.owner == owner))
+        if owner.startswith("u:"):
+            uid = owner[2:]
+            c.execute(delete(sessions).where(sessions.c.user_id == uid))
+            c.execute(delete(users).where(users.c.id == uid))
+    return {"analyses": a, "resumes": r, "searches": s, "applications": t, "watches": w}
+
+
+def reassign_owner(old: str, new: str) -> None:
+    """Sign-in: anonymous work moves to the account (and stops expiring after a week)."""
+    if not old or old == new:
+        return
+    with engine().begin() as c:
+        for t in (resumes, analyses):
+            c.execute(update(t).where(t.c.owner == old).values(owner=new, expires_at=expiry(new)))
+        for t in (searches, applications, watches, ext_tokens, llm_calls):
+            c.execute(update(t).where(t.c.owner == old).values(owner=new))
 
 
 # ---------- LLM call log (ROADMAP §8.2) ----------

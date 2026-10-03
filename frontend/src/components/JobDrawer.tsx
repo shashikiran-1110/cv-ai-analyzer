@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAi } from "../ai";
-import { api } from "../api";
+import { api, post } from "../api";
+import { useToast } from "./Toast";
 import type { DeepResult, Gate, JobDetail, ReqCheck, ScoredJob } from "../types";
 import { IconShield, IconWarn, StatusIcon } from "./Icons";
 import { SourceBadges } from "./SourceBadge";
@@ -17,6 +18,7 @@ const TOOLS = [
 
 export function JobDrawer({ analysisId, job, threshold, onClose, onDeep }: { analysisId: string; job: ScoredJob; threshold: number; onClose: () => void; onDeep: (id: string) => Promise<DeepResult> }) {
   const ai = useAi();
+  const toast = useToast();
   const [detail, setDetail] = useState<JobDetail | null>(null);
   const [showDesc, setShowDesc] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
@@ -110,6 +112,15 @@ export function JobDrawer({ analysisId, job, threshold, onClose, onDeep }: { ana
       {job.required_years != null && <div className="job-sub">Experience asked: {job.required_years}+ years{job.required_years_inferred ? " (inferred from title)" : ""}</div>}
       {job.confidence === "low" && <Alert kind="info">Little or no description text was available, so this score is a rough estimate.</Alert>}
 
+      <div className="agent-links">
+        <button className="btn small" data-testid="save-tracker" onClick={async () => {
+          try {
+            await post("/api/tracker", { job_id: job.id, analysis_id: analysisId, title: job.title, company: job.company, location: job.location,
+              url: job.url, score: job.score, source: job.source });
+            toast("Saved to your tracker.", "ok");
+          } catch (e) { toast((e as Error).message, "error"); }
+        }}>☆ Save to tracker</button>
+      </div>
       <h3 className="sec">AI tools for this job</h3>
       <div className="agent-links">
         <Link className="btn small primary" to={`/analysis/${analysisId}/tailor/${job.id}`} data-testid="open-tailor">✎ Tailor my resume (guarded edits + .docx)</Link>
