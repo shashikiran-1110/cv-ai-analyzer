@@ -29,8 +29,9 @@ def _free_port() -> int:
 def server(tmp_path_factory):
     port = _free_port()
     env = {**os.environ, "DATABASE_URL": f"sqlite:///{tmp_path_factory.mktemp('db')}/e2e.db", "PYTHONPATH": str(ROOT)}
+    log = open(tmp_path_factory.mktemp("log") / "server.log", "w")       # a file, so a chatty server never blocks
     proc = subprocess.Popen([sys.executable, "scripts/demo_server.py", str(port)], cwd=ROOT, env=env,
-                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                            stdout=log, stderr=subprocess.STDOUT)
     for _ in range(60):
         try:
             socket.create_connection(("127.0.0.1", port), timeout=0.5).close()
@@ -40,6 +41,7 @@ def server(tmp_path_factory):
     yield f"http://127.0.0.1:{port}"
     proc.terminate()
     proc.wait(timeout=10)
+    log.close()
 
 
 @pytest.fixture(scope="module")
@@ -109,6 +111,30 @@ def test_full_flow(server, browser, resume_pdf):
     expect(page.locator(".modal")).to_have_count(0)
     page.reload()
     expect(page.locator(".tag.ai")).to_have_count(5, timeout=10000)                     # deep results persisted
+    expect(page.locator("[data-testid=ai-spend]")).to_contain_text("call", timeout=5000)  # AI spend is shown
+
+    # AI requirement lists (Phase 3 extractor): invented items are dropped server-side
+    page.click("button:has-text('AI requirement lists')")
+    expect(page.locator(".toast", has_text="AI requirement lists in use")).to_have_count(1, timeout=15000)
+
+    # profile review: add a skill the resume doesn't show, save, and the report re-scores with it
+    page.click(".tabs button:has-text('Skills')")
+    expect(page.locator(".card:has(h2:has-text('Skill gaps')) .learn-head span", has_text="Kubernetes")).to_have_count(1)
+    page.click(".tabs button:has-text('Overview')")
+    report_url = page.url
+    page.click("a:has-text('Review what was read')")
+    expect(page.locator("h1#h-profile")).to_be_visible(timeout=10000)
+    expect(page.locator(".timeline > li")).to_have_count(1)
+    page.fill(".profile-page input[placeholder^='Add a skill']", "Kubernetes")
+    page.keyboard.press("Enter")
+    page.click("button:has-text('Save corrections')")
+    expect(page.locator(".toast", has_text="Profile saved")).to_have_count(1, timeout=5000)
+    page.click("a:has-text('Back to report')")
+    expect(page).to_have_url(re.compile(r"/analysis/[0-9a-f]{32}"), timeout=5000)
+    expect(page).not_to_have_url(re.compile(r"rescore"), timeout=5000)
+    page.click(".tabs button:has-text('Skills')")
+    expect(page.locator(".card:has(h2:has-text('Skill gaps')) .learn-head span", has_text="Kubernetes")).to_have_count(0, timeout=8000)
+    page.goto(report_url)
 
     # settings → export
     page.click("a:has-text('Settings')")

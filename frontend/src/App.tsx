@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { BrowserRouter, Link, Route, Routes, useLocation } from "react-router-dom";
 import { AiProvider, useAi } from "./ai";
 import { api, SERVER_DOWN } from "./api";
@@ -7,13 +7,15 @@ import { AiSettingsModal } from "./components/AiSettingsModal";
 import { Background } from "./components/Background";
 import { DiagnoseModal } from "./components/DiagnoseModal";
 import { Header } from "./components/Header";
+import { Skeleton } from "./components/Skeleton";
 import { SetupStep } from "./components/SetupStep";
 import { ToastProvider } from "./components/Toast";
-import { AnalysisPage } from "./pages/AnalysisPage";
 import { SearchPage } from "./pages/SearchPage";
-import { SettingsPage } from "./pages/SettingsPage";
 import { SetupProvider } from "./state/setup";
 
+const AnalysisPage = lazy(() => import("./pages/AnalysisPage").then((m) => ({ default: m.AnalysisPage })));
+const ProfilePage = lazy(() => import("./pages/ProfilePage").then((m) => ({ default: m.ProfilePage })));
+const SettingsPage = lazy(() => import("./pages/SettingsPage").then((m) => ({ default: m.SettingsPage })));
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } } });
 
 function Shell() {
@@ -37,13 +39,16 @@ function Shell() {
       {serverDown && <div className="banner" role="alert">{SERVER_DOWN} <button className="link" onClick={() => setDiag(true)}>Details</button></div>}
       <main className="wrap">
         <div key={loc.pathname} className="route">
+          <Suspense fallback={<Skeleton rows={6} />}>
           <Routes location={loc}>
             <Route path="/" element={<SetupStep openDiagnose={() => setDiag(true)} />} />
             <Route path="/search/:sid" element={<SearchPage openDiagnose={() => setDiag(true)} />} />
             <Route path="/analysis/:aid" element={<AnalysisPage />} />
+            <Route path="/profile/:rid" element={<ProfilePage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="*" element={<section className="enter"><h1>Page not found</h1><Link className="btn" to="/">Go to setup</Link></section>} />
           </Routes>
+          </Suspense>
         </div>
       </main>
       <footer className="wrap foot">Scores are an automated, explainable estimate (skills, requirements, role, experience, semantic overlap), not a hiring decision. Use them to prioritise and to spot gaps.</footer>

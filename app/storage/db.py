@@ -125,13 +125,23 @@ def save_search(sid: str, s: dict, owner: str = "") -> None:
 
 
 def upsert_job(c, j: dict, now: float) -> None:
-    row = c.execute(select(jobs.c.id, jobs.c.first_seen).where(jobs.c.id == j["id"])).first()
+    row = c.execute(select(jobs.c.id, jobs.c.features).where(jobs.c.id == j["id"])).first()
+    if row and row.features and not j.get("features"):
+        j = {**j, "features": loads(row.features)}       # keep derived features (e.g. extracted requirements)
     vals = dict(source=j.get("source", ""), company=j.get("company", "")[:300], title=j.get("title", "")[:300],
                 location=j.get("location", "")[:300], posted=j.get("posted", "")[:40], data=dumps(j), last_seen=now)
+    if j.get("features"):
+        vals["features"] = dumps(j["features"])
     if row:
         c.execute(update(jobs).where(jobs.c.id == j["id"]).values(**vals))
     else:
         c.execute(insert(jobs).values(id=j["id"], first_seen=now, **vals))
+
+
+def save_job_features(job: dict) -> None:
+    """Persist a job's derived `features` (stored with the job, reused by every search that finds it again)."""
+    with engine().begin() as c:
+        upsert_job(c, job, time.time())
 
 
 def load_search(sid: str) -> Optional[dict]:
@@ -195,7 +205,10 @@ def save_resume(rid: str, text: str, sha: str, owner: str = "", profile: Any = N
     now = time.time()
     with engine().begin() as c:
         if c.execute(select(resumes.c.id).where(resumes.c.id == rid)).first():
-            c.execute(update(resumes).where(resumes.c.id == rid).values(text=text, profile=dumps(profile) if profile else None))
+            vals = {"text": text, "expires_at": now + retention_seconds()}
+            if profile is not None:
+                vals["profile"] = dumps(profile)
+            c.execute(update(resumes).where(resumes.c.id == rid).values(**vals))
         else:
             c.execute(insert(resumes).values(id=rid, owner=owner, sha256=sha, text=text,
                                              profile=dumps(profile) if profile is not None else None,
@@ -214,6 +227,11 @@ def load_resume(rid: str) -> Optional[dict]:
 def save_corrections(rid: str, corrections: dict) -> None:
     with engine().begin() as c:
         c.execute(update(resumes).where(resumes.c.id == rid).values(corrections=dumps(corrections)))
+
+
+def save_profile(rid: str, profile: dict) -> None:
+    with engine().begin() as c:
+        c.execute(update(resumes).where(resumes.c.id == rid).values(profile=dumps(profile)))
 
 
 # ---------- kv cache ----------

@@ -30,6 +30,7 @@ from .jobmodel import Job
 from .runtime import ratelimit
 from .runtime.events import bus
 from .storage import db
+from .understanding import requirements as req_extract, resume_parse
 
 log = logging.getLogger("app")
 app = FastAPI(title="CV AI Analyzer")
@@ -453,7 +454,7 @@ async def resume_preview(request: Request, resume_file: Optional[UploadFile] = F
 
 # ---------- analysis ----------
 def _compute(a: dict, extra: list[str], threshold: int) -> dict:
-    profile = matcher.ResumeProfile.build(a["resume_text"], a["years"], set(extra))
+    profile = matcher.ResumeProfile.build(a["resume_text"], a["years"], set(extra), a.get("corrections") or None)
     if "idf" not in a:  # corpus statistics for semantic similarity: these postings + the resume
         a["idf"] = matcher.corpus_idf([j.get("description") or "" for j in a["jobs_full"]] + [a["resume_text"]])
     results = [matcher.score_job(j, profile, a["idf"]) for j in a["jobs_full"]]
@@ -515,8 +516,10 @@ async def analyze(
     rid = hashlib.sha256((owner(request) + text).encode()).hexdigest()[:32]
     await run_in_threadpool(db.save_resume, rid, text, hashlib.sha256(text.encode()).hexdigest(), owner(request))
 
+    saved = await run_in_threadpool(db.load_resume, rid)
     aid = uuid.uuid4().hex
     a = {"created": time.time(), "resume_text": text, "years": resume.estimate_years(text), "resume_id": rid,
+         "corrections": (saved or {}).get("corrections") or {},
          "jobs_full": jobs, "query": s["query"], "extra": extra, "search_id": search_id, "owner": owner(request)}
     computed = await run_in_threadpool(_compute, a, extra, threshold)
     ins = insights.local_insights(computed["summary"], computed["jobs"], s["query"])
@@ -628,7 +631,7 @@ async def deep_estimate(aid: str, request: Request, n: int = 10):
     jobs = sorted(a["result"]["jobs"], key=lambda r: -r["score"])
     todo = [j for j in jobs if not j.get("deep")][: max(1, min(n, 60))]
     full = {j["id"]: j for j in a["jobs_full"]}
-    chars = sum(len((full.get(j["id"]) or {}).get("description") or "")[:7000] + 1500 for j in todo) // max(1, len(todo))
+    chars = sum(min(len((full.get(j["id"]) or {}).get("description") or ""), 7000) + 1500 for j in todo) // max(1, len(todo))
     resume_chars = min(len(a["resume_text"]), 12000)
     est = gateway.estimate_cost(cfg, "standard", chars + resume_chars, 900, len(todo), cached_chars=resume_chars)
     return {"estimate_usd": est, "calls": len(todo), "model": gateway.model_for(cfg, "standard"),
@@ -654,6 +657,9 @@ async def rescore(aid: str, body: RescoreRequest):
     a = _analysis(aid)
     extra, unknown = _parse_extra(body.extra_skills)
     a["extra"] = extra
+    saved = await run_in_threadpool(db.load_resume, a.get("resume_id") or "")
+    if saved is not None:                       # pick up profile corrections made since the analysis ran
+        a["corrections"] = saved.get("corrections") or {}
     computed = await run_in_threadpool(_compute, a, extra, body.threshold)
     a["result"].update(computed)
     await run_in_threadpool(_persist_analysis, aid, a)
@@ -725,6 +731,96 @@ async def tool(aid: str, body: ToolRequest, request: Request):
                                   cacheable, volatile)
 
 
+async def _extract_requirements(cfg: llm.LLMConfig, job: dict, who: str, aid: str) -> None:
+    """Best effort: verified AI requirement list for one job; on any failure the rule-based lines stay."""
+    try:
+        feats = await req_extract.extract(cfg, job, gateway.Call(agent="requirement_extractor", owner=who, analysis_id=aid))
+    except llm.LLMError as e:
+        log.info("requirement extraction failed: %s", e)
+        return
+    job["features"] = {**(job.get("features") or {}), **feats}
+    await run_in_threadpool(db.save_job_features, job)
+
+
+class ExtractRequest(BaseModel):
+    job_ids: list[str] = Field(default=[], max_length=30)
+
+
+@app.post("/api/analysis/{aid}/extract")
+async def extract_requirements(aid: str, body: ExtractRequest, request: Request):
+    """AI requirement lists for several jobs (each span-verified against its posting), then rescore."""
+    a = _analysis(aid)
+    cfg = llm.require(request.headers)
+    ratelimit.check(request, "ai", cost=max(1, len(body.job_ids) // 5))
+    todo = [_job(a, i) for i in body.job_ids]
+    todo = [j for j in todo if not req_extract.is_current(j)]
+    sem = asyncio.Semaphore(4)
+
+    async def one(j):
+        async with sem:
+            await _extract_requirements(cfg, j, owner(request), aid)
+    await asyncio.gather(*(one(j) for j in todo))
+    computed = await run_in_threadpool(_compute, a, a["extra"], a["result"]["summary"]["threshold"])
+    a["result"].update(computed)
+    await run_in_threadpool(_persist_analysis, aid, a)
+    done = sum(1 for i in body.job_ids if (_job(a, i).get("features") or {}).get("requirements"))
+    return {"extracted": len(todo), "using_ai_requirements": done, "summary": computed["summary"], "jobs": computed["jobs"]}
+
+
+# ---------- profile review (ROADMAP §5.3) ----------
+class RoleFix(BaseModel):
+    title: Optional[str] = Field(default=None, max_length=120)
+    company: Optional[str] = Field(default=None, max_length=120)
+    start: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}$")
+    end: Optional[str] = Field(default=None, pattern=r"^(\d{4}-\d{2}|present)$")
+    ignore: bool = False
+
+
+class Corrections(BaseModel):
+    roles: dict[str, RoleFix] = Field(default={}, max_length=40)
+    skills_add: list[str] = Field(default=[], max_length=60)
+    skills_remove: list[str] = Field(default=[], max_length=60)
+    degree: Optional[Literal["", "Bachelor's", "Master's", "PhD"]] = None
+    years_override: Optional[float] = Field(default=None, ge=0, le=60)
+
+
+def _owned_resume(rid: str, request: Request) -> dict:
+    r = db.load_resume(rid) if len(rid) == 32 and rid.isalnum() else None
+    if not r or (r["owner"] and r["owner"] != owner(request)):
+        raise HTTPException(404, "That resume expired or isn't yours. Upload it again.")
+    return r
+
+
+def _profile_view(r: dict) -> dict:
+    p = r.get("profile")
+    if not p or p.get("parser_version") != resume_parse.PARSER_VERSION:
+        p = resume_parse.parse(r["text"])
+        db.save_profile(r["id"], p)
+    corr = r.get("corrections") or {}
+    return {"resume_id": r["id"], "parsed": p, "corrections": corr, "profile": resume_parse.apply_corrections(p, corr),
+            "formatting": resume_parse.formatting_check(r["text"], p)}
+
+
+@app.get("/api/profiles/{rid}")
+async def get_profile(rid: str, request: Request):
+    return await run_in_threadpool(lambda: _profile_view(_owned_resume(rid, request)))
+
+
+@app.patch("/api/profiles/{rid}")
+async def patch_profile(rid: str, body: Corrections, request: Request):
+    def go():
+        r = _owned_resume(rid, request)
+        corr = body.model_dump(exclude_none=True)
+        corr["roles"] = {k: v.model_dump(exclude_none=True) for k, v in body.roles.items()}
+        corr["skills_add"] = [x for x in (s.strip()[:60] for s in body.skills_add) if x]
+        corr["skills_remove"] = [x for x in (s.strip()[:60] for s in body.skills_remove) if x]
+        corr = {k: v for k, v in corr.items() if v not in ({}, [])}
+        db.save_corrections(rid, corr)
+        r["corrections"] = corr
+        return _profile_view(r)
+    return await run_in_threadpool(go)
+
+
 @app.post("/api/analysis/{aid}/deep/{job_id}")
 async def deep_check(aid: str, job_id: str, request: Request):
     a = _analysis(aid)
@@ -737,6 +833,11 @@ async def deep_check(aid: str, job_id: str, request: Request):
     scored = next((r for r in a["result"]["jobs"] if r["id"] == job_id), None)
     if scored is None:
         raise HTTPException(404, "Job not found in this analysis.")
+    if not req_extract.is_current(job):
+        await _extract_requirements(cfg, job, owner(request), aid)
+        computed = await run_in_threadpool(_compute, a, a["extra"], a["result"]["summary"]["threshold"])
+        a["result"].update(computed)
+        scored = next(r for r in computed["jobs"] if r["id"] == job_id)
     base = {**scored, "score": scored.get("score_det", scored["score"])}
     a["deep"][job_id] = await deepmatch.assess(cfg, job, base, a["resume_text"],
                                                gateway.Call(agent="deep_verifier", owner=owner(request), analysis_id=aid))

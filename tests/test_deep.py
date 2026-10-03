@@ -70,6 +70,12 @@ async def test_deep_endpoint_judges_the_engines_requirements(client, resume_pdf,
 
     def handler(request):
         body = json.loads(request.content)
+        if body["response_format"]["json_schema"]["name"] == "Answer":       # requirement extractor runs first
+            seen["extract"] = seen.get("extract", 0) + 1
+            items = [{"text": t, "importance": "must", "kind": "skill", "years": 0} for t in
+                     ("3+ years of experience building data pipelines", "Strong Python and SQL skills",
+                      "Hands-on experience with AWS and Docker", "Kubernetes certification required")]   # last: invented
+            return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps({"requirements": items})}}]})
         prompt = body["messages"][1]["content"]
         seen["prompt"] = prompt
         seen["system"] = body["messages"][0]["content"]
@@ -97,16 +103,20 @@ async def test_deep_endpoint_judges_the_engines_requirements(client, resume_pdf,
         r = await c.post(f"/api/analysis/{aid}/deep/{jid}", headers=HDR)
         assert r.status_code == 200, r.text
         d = r.json()["deep"]
-    assert seen["ids"] == [q["id"] for q in job["requirements"]]                       # D11: same list
+    scored = next(j for j in r.json()["jobs"] if j["id"] == jid)
+    assert seen["extract"] == 1
+    assert [q["text"] for q in scored["requirements"]] == ["3+ years of experience building data pipelines",
+                                                          "Strong Python and SQL skills",
+                                                          "Hands-on experience with AWS and Docker"]   # invented item dropped
+    assert seen["ids"] == [q["id"] for q in scored["requirements"]]                    # D11: same list
     assert seen["format"]["type"] == "json_schema" and seen["format"]["json_schema"]["strict"] is True
     assert "<resume>" in seen["system"] and "<resume>" not in seen["prompt"]          # resume is the cached prefix
-    assert all(q["text"] in seen["prompt"] for q in job["requirements"])
+    assert all(q["text"] in seen["prompt"] for q in scored["requirements"])
     rows = d["requirements"]
     assert rows[0]["verified"] and rows[0]["source"] == "ai" and rows[0]["evidence"].startswith("Data engineer")
     assert rows[1]["ai_status"] == "partial" and rows[1]["flag"] and rows[1]["source"] == "rules"
     assert rows[2]["ai_status"] == "missing" and rows[2]["flag"] == "no resume evidence given"     # D10
     assert d["mode"] == "fixed" and d["unverified_claims"] == 2
-    scored = next(j for j in r.json()["jobs"] if j["id"] == jid)
     assert scored["score"] == d["final_score"] and scored["score_det"] == d["det_score"]
 
 

@@ -203,6 +203,20 @@ def _deep_answer(prompt: str) -> dict:
     return {"verdict": "possible", "summary": "Demo assessment of the engine's requirement checklist.", "assessments": out}
 
 
+def _extract_answer(prompt: str) -> dict:
+    """Requirement extractor protocol: the posting's bullet lines, plus one invented item the server must drop."""
+    job = prompt.split("<job>", 1)[-1].split("</job>", 1)[0]
+    items, section = [], "must"
+    for line in job.splitlines():
+        t = line.strip()
+        if re.match(r"(?i)^(nice to have|preferred|bonus)", t):
+            section = "nice"
+        if re.match(r"^[-•*]\s+", t):
+            items.append({"text": re.sub(r"^[-•*]\s+", "", t), "importance": section, "kind": "skill", "years": 0})
+    items.append({"text": "Security clearance at TS/SCI level", "importance": "must", "kind": "other", "years": 0})
+    return {"requirements": items[:25]}
+
+
 @main.app.post("/fake-openai/v1/chat/completions")
 async def fc(request: Request):
     body = await request.json()
@@ -218,9 +232,13 @@ async def fc(request: Request):
                 await asyncio.sleep(0.02)
             yield "data: [DONE]\n\n"
         return StreamingResponse(gen(), media_type="text/event-stream")
+    everything = "\n".join(str(m.get("content", "")) for m in body["messages"])
     if "Requirements to judge" in user or "has no clearly structured requirement list" in user:
         await asyncio.sleep(0.3)
-        return {"choices": [{"message": {"content": json.dumps(_deep_answer(user))}}]}
+        return {"choices": [{"message": {"content": json.dumps(_deep_answer(everything))}}]}
+    if "List the candidate requirements" in user:
+        await asyncio.sleep(0.2)
+        return {"choices": [{"message": {"content": json.dumps(_extract_answer(user))}}]}
     out = {"summary": "AI: strong data-engineering profile; main gap is container orchestration.",
            "strengths": ["AI strength: solid Python/SQL/AWS match"], "improvements": ["AI: quantify pipeline impact"],
            "skills_to_learn": [{"skill": "Kubernetes", "why": "Asked in most postings.", "how": "Deploy a small app on kind."}]}

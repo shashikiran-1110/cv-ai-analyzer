@@ -1,12 +1,12 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, post } from "../api";
 import { CountUp } from "../hooks/useCountUp";
 import { useRunEvents } from "../hooks/useRunEvents";
 import { useToast } from "./Toast";
 import { useAi } from "../ai";
-import type { Analysis, DeepResult, ScoredJob } from "../types";
+import type { Analysis, DeepEstimate, DeepResult, ScoredJob, Spend } from "../types";
 import { AssistantTab } from "./AssistantTab";
 import { IconShield, IconWarn } from "./Icons";
 import { JobDrawer } from "./JobDrawer";
@@ -79,6 +79,38 @@ export function ReportStep({ initial, notes = [] }: { initial: Analysis; notes?:
     }, 350);
   }
   useEffect(() => () => { window.clearTimeout(timer.current); stopDeep.current = true; }, []);
+  // back from the profile page with saved corrections: re-score once with them
+  useEffect(() => {
+    if (params.get("rescore")) { setParam("rescore", null); setExtra(extra); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // AI spend so far + a pre-flight estimate for "Verify top N" (ROADMAP §8.2)
+  const [spend, setSpend] = useState<Spend | null>(null);
+  const [est, setEst] = useState<Record<number, DeepEstimate>>({});
+  const [extracting, setExtracting] = useState(false);
+  const refreshSpend = () => { void api<Spend>(`/api/analysis/${a.analysis_id}/costs`).then(setSpend).catch(() => {}); };
+  useEffect(() => {
+    if (tab !== "jobs") return;
+    refreshSpend();
+    if (!ai.usable) return;
+    for (const k of [5, 10, 20]) void api<DeepEstimate>(`/api/analysis/${a.analysis_id}/deep-estimate?n=${k}`, { headers: ai.headers })
+      .then((e) => setEst((p) => ({ ...p, [k]: e }))).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, ai.usable, verified]);
+  const usd = (x: number) => (x < 0.01 ? "<$0.01" : `$${x.toFixed(2)}`);
+
+  async function extractTop(count: number) {
+    if (!ai.usable) return ai.openModal(true);
+    const ids = [...a.jobs].sort((x, y) => y.score - x.score).slice(0, count).map((j) => j.id);
+    setExtracting(true);
+    try {
+      const r = await post<Partial_ & { extracted: number; using_ai_requirements: number }>(`/api/analysis/${a.analysis_id}/extract`, { job_ids: ids }, ai.headers);
+      merge({ summary: r.summary, jobs: r.jobs });
+      toast(`AI requirement lists in use for ${r.using_ai_requirements} of ${ids.length} jobs (every item checked against the posting text).`, "ok");
+    } catch (e) { toast((e as Error).message, "error"); }
+    finally { setExtracting(false); refreshSpend(); }
+  }
 
   async function deepOne(jobId: string): Promise<DeepResult> {
     const r = await post<Partial_ & { deep: DeepResult }>(`/api/analysis/${a.analysis_id}/deep/${jobId}`, {}, ai.headers);
@@ -106,7 +138,10 @@ export function ReportStep({ initial, notes = [] }: { initial: Analysis; notes?:
       }
     };
     await Promise.all([worker(), worker()]);
+    // parallel checks can answer out of order; the server's copy has every verified job
+    try { const fresh = await api<Analysis>(`/api/analysis/${a.analysis_id}`); merge({ summary: fresh.summary, jobs: fresh.jobs }); } catch { /* keep what we have */ }
     setDeep((d) => ({ ...d, running: false }));
+    refreshSpend();
   }
 
   const openJob = a.jobs.find((j) => j.id === open) ?? null;
@@ -140,8 +175,17 @@ export function ReportStep({ initial, notes = [] }: { initial: Analysis; notes?:
             {deep.running ? <>
               <span className="muted">Verifying {deep.done}/{deep.total}…</span>
               <button className="btn small" onClick={() => { stopDeep.current = true; }}>Stop</button>
-            </> : [5, 10, 20].map((k) => <button key={k} className="btn small" onClick={() => deepTop(k)}>Verify top {k}</button>)}
+            </> : <>{[5, 10, 20].map((k) => <button key={k} className="btn small" onClick={() => deepTop(k)}
+                title={est[k]?.estimate_usd != null ? `About ${usd(est[k].estimate_usd!)} for ${est[k].calls} job(s) with ${est[k].model}` : est[k]?.message || ""}>
+                Verify top {k}{est[k]?.estimate_usd != null && est[k].calls > 0 ? <small className="est"> ≈{usd(est[k].estimate_usd!)}</small> : null}</button>)}
+              <button className="btn small ghost" disabled={extracting} onClick={() => extractTop(10)}
+                title="The AI splits each posting into clean, typed requirements; any item it can't point to in the posting is discarded.">
+                {extracting ? "Reading postings…" : "AI requirement lists (top 10)"}</button></>}
           </div>
+          {spend && spend.calls > 0 && <div className="cost-line" data-testid="ai-spend">AI used for this analysis: <b>{spend.calls}</b> call{spend.calls > 1 ? "s" : ""}
+            {spend.cost_known ? <> · <b>{usd(spend.cost_usd)}</b></> : " · cost unknown for this model"}
+            {spend.cached_tokens > 0 && <> · {Math.round(spend.cached_tokens / 1000)}k tokens from prompt cache</>}
+            {spend.result_cache_hits > 0 && <> · {spend.result_cache_hits} answer{spend.result_cache_hits > 1 ? "s" : ""} reused</>}</div>}
           {!ai.usable && <small className="muted">Needs an AI key. <button className="link" onClick={() => ai.openModal(true)}>Add one</button></small>}
           {deep.errors.length > 0 && <Alert kind="warn">{deep.errors.length} check{deep.errors.length > 1 ? "s" : ""} failed: {[...new Set(deep.errors)].join(" | ")}</Alert>}
         </div>
@@ -178,6 +222,7 @@ function Overview({ a, extra, threshold, setThreshold, qualifying, pct, dist, de
             <div><span><b>{s.resume_years ? s.resume_years.toFixed(1) : "?"}</b></span><small>yrs experience</small></div>
             <div><span><b>{s.resume_skills.length}</b></span><small>skills detected</small></div>
           </div>
+          {a.resume_id && <Link className="link small" to={`/profile/${a.resume_id}?from=${encodeURIComponent(`/analysis/${a.analysis_id}?rescore=1`)}`}>Years or skills wrong? Review what was read from your resume →</Link>}
         </div>
         <div className="dist" aria-label="Score distribution">
           {dist.map((c, i) => <div key={i}><b>{c}</b><i style={{ height: `${Math.max(3, Math.round((c / max) * 70))}px` }} />{BUCKETS[i]}</div>)}

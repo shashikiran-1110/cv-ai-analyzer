@@ -271,3 +271,30 @@ h2 svg, h3 svg { width: 16px; height: 16px; }
 .v-met { color: var(--good); } .v-partial { color: var(--warn); } .v-missing { color: var(--bad); } .v-not-assessed { color: var(--muted); }
 .exp-spans { font-size: .86rem; } .exp-spans summary { cursor: pointer; color: var(--ink); }
 .exp-spans ul { margin: 6px 0; padding-left: 18px; } .exp-spans li { margin-bottom: 4px; overflow-wrap: anywhere; }
+
+/* ---------- profile review ---------- */
+.profile-cols { grid-template-columns: 1.15fr 1fr; }
+@media (max-width: 900px) { .profile-cols { grid-template-columns: 1fr; } }
+.timeline { list-style: none; margin: 8px 0 16px; padding: 0 0 0 18px; position: relative; display: grid; gap: 14px; }
+.timeline::before { content: ""; position: absolute; left: 5px; top: 8px; bottom: 8px; width: 2px; background: linear-gradient(var(--brand), color-mix(in srgb, var(--brand) 10%, transparent)); border-radius: 2px; }
+.timeline li { position: relative; transition: opacity .25s; }
+.timeline li.off { opacity: .5; }
+.timeline li.off input { text-decoration: line-through; }
+.tl-dot { position: absolute; left: -18px; top: 14px; width: 12px; height: 12px; border-radius: 50%; background: var(--brand); box-shadow: 0 0 0 4px var(--brand-soft); }
+.tl-body { display: grid; gap: 6px; }
+.tl-row { display: grid; grid-template-columns: 1.2fr 1fr; gap: 8px; }
+.tl-row.small { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; font-size: .85rem; }
+.tl-row.small label { display: flex; gap: 6px; align-items: center; }
+.tl-row.small input[type=month] { min-height: 36px; padding: 4px 8px; width: auto; }
+.tl-row.small .muted { margin: 0; }
+.bullets { margin: 6px 0 0; padding-left: 18px; font-size: .86rem; display: grid; gap: 4px; }
+.chips.inline { display: inline-flex; margin: 0 0 0 6px; vertical-align: middle; }
+.row-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 560px) { .row-fields, .tl-row { grid-template-columns: 1fr; } }
+.skill-group h4 { margin: 12px 0 6px; font-size: .86rem; }
+.chip.struck { text-decoration: line-through; opacity: .55; background: var(--line); }
+.cost-line { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; font-size: .82rem; color: var(--muted); }
+.cost-line b { color: var(--ink); }
+.btn.ghost { background: transparent; border-style: dashed; }
+.link.small { display: inline-block; margin-top: 10px; font-size: .84rem; }
+.btn small.est { color: inherit; opacity: .7; font-size: .74rem; margin-left: 4px; }

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../api";
 import type { ResumePreview } from "../types";
 import { SkillPicker } from "./SkillPicker";
@@ -59,7 +60,7 @@ export function ResumeCard({ value, onChange }: { value: ResumeState; onChange: 
   const p = value.preview;
   return (
     <div className="card setup-card">
-      <div className="card-head"><span className="num">1</span><div><h2>Your resume</h2><small>PDF or pasted text · read in memory, never stored</small></div></div>
+      <div className="card-head"><span className="num">1</span><div><h2>Your resume</h2><small>PDF or pasted text · kept for 7 days, delete any time in Settings</small></div></div>
       <div className="seg narrow" role="tablist" aria-label="Resume input">
         {(["pdf", "paste"] as const).map((m) => (
           <button key={m} role="tab" type="button" aria-selected={value.mode === m} aria-checked={value.mode === m}
@@ -94,7 +95,7 @@ export function ResumeCard({ value, onChange }: { value: ResumeState; onChange: 
           <div className="chips">{p.skills.slice(0, 24).map((s) => <span className="chip ok" key={s}>{s}</span>)}
             {p.skills.length > 24 && <span className="chip">+{p.skills.length - 24} more</span>}
             {p.skills.length === 0 && <span className="muted">No known skills detected; matching will rely on keywords.</span>}</div>
-          <small className="muted">These are the skills the matcher sees. If something's missing, add it below.</small>
+          <small className="muted">These are the skills the matcher sees. If something's missing, add it below, or <Link to={`/profile/${value.resumeId}`}>review and correct your full profile</Link> (roles, dates, degree, readability check).</small>
           <details className="exp-spans">
             <summary>Experience counted: {p.experience.months} months from {p.experience.spans.length} dated role{p.experience.spans.length === 1 ? "" : "s"}
               {p.experience.precision === "year" ? " (some dates are year-only, so this is approximate)" : ""}

@@ -266,11 +266,21 @@ class ResumeProfile:
     terms: frozenset = frozenset()
 
     @classmethod
-    def build(cls, text: str, years: float, extra_skills: set[str] | None = None) -> "ResumeProfile":
+    def build(cls, text: str, years: float, extra_skills: set[str] | None = None,
+              corrections: dict | None = None) -> "ResumeProfile":
+        """`corrections` are the user's profile fixes (ROADMAP §5.3); they beat what the parser read."""
         from .resume import strip_identity           # names/contacts never reach matching (ROADMAP §14.2)
-        text = strip_identity(text)
-        return cls(text=text, skills=sk.extract_skills(text) | (extra_skills or set()), years=years, head=text[:400],
-                   education=education_level(text), terms=frozenset(_content_terms(text)))
+        raw, text = text, strip_identity(text)
+        skills, education = sk.extract_skills(text), education_level(text)
+        if corrections:
+            from .understanding.resume_parse import matching_inputs
+            mi = matching_inputs(raw, corrections)
+            years = mi["years"] if mi["years"] is not None else years
+            skills = (skills | mi["add"]) - mi["remove"]
+            if mi["degree"] is not None:
+                education = mi["degree"] or None
+        return cls(text=text, skills=skills | (extra_skills or set()), years=years, head=text[:400],
+                   education=education, terms=frozenset(_content_terms(text)))
 
 
 def _line_coverage(text: str, profile: ResumeProfile) -> tuple[Optional[float], list[str]]:
@@ -364,7 +374,10 @@ def score_job(job: dict, profile: ResumeProfile, idf: Optional[dict[str, float]]
     # requirement lines
     reqs = []
     num = den = 0.0
-    lines = requirement_lines(desc)          # computed once per job (ROADMAP D14)
+    # verified AI-extracted requirements (Phase 3 extractor) replace the rule-based lines when present
+    ai_reqs = (job.get("features") or {}).get("requirements")
+    lines = ([(r["text"], bool(r["preferred"])) for r in ai_reqs] if ai_reqs else
+             requirement_lines(desc))          # computed once per job (ROADMAP D14)
     for text, preferred in lines:
         cov, miss = _line_coverage(text, profile)
         if cov is None:

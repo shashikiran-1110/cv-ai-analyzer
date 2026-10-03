@@ -73,3 +73,25 @@ export interface ResumePreview {
 }
 export interface CheckResult { name: string; ok: boolean; message: string; kind?: string }
 export interface Diagnosis { api: CheckResult; checks: Record<string, CheckResult>; ai_key: VerifyResult }
+export interface ProfileBullet { id: string; text: string; skills: string[]; metrics?: string[] }
+export interface ProfileRole {
+  id: string; title: string; company: string; start: string; end: string; months: number;
+  date_precision: string; bullets: ProfileBullet[]; ignore?: boolean;
+}
+export interface ProfileSkill { name: string; evidence: string[]; months_used: number; last_used: string; source: string; strength: string; category: string }
+export interface StructuredProfile {
+  parser_version: number; headline: string; roles: ProfileRole[]; skills: ProfileSkill[]; education_level: string | null;
+  education: { text: string; degree_level: string | null; institution: string; field: string; start: string; end: string }[];
+  experience_months: { total: number; explicit_years: number }; parse: { warnings: string[]; confidence: number };
+}
+export interface RoleFix { title?: string; company?: string; start?: string; end?: string; ignore?: boolean }
+export interface Corrections {
+  roles?: Record<string, RoleFix>; skills_add?: string[]; skills_remove?: string[];
+  degree?: "" | "Bachelor's" | "Master's" | "PhD"; years_override?: number;
+}
+export interface ProfileView {
+  resume_id: string; parsed: StructuredProfile; profile: StructuredProfile; corrections: Corrections;
+  formatting: { label: string; ok: boolean; detail: string }[];
+}
+export interface Spend { calls: number; cost_usd: number; input_tokens: number; output_tokens: number; cached_tokens: number; result_cache_hits: number; cost_known: boolean }
+export interface DeepEstimate { estimate_usd: number | null; calls: number; model?: string; message: string }
