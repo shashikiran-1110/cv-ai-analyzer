@@ -15,7 +15,7 @@ from __future__ import annotations
 import math
 import re
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from . import skills as sk
@@ -264,6 +264,9 @@ class ResumeProfile:
     head: str
     education: Optional[str] = None
     terms: frozenset = frozenset()
+    implied: dict = field(default_factory=dict)       # skill → owned skill that implies it (ontology)
+    lines: tuple = ()                                  # (resume line, skills on it) for evidence pointers
+    eligibility: dict = field(default_factory=dict)   # work authorisation, languages, licences… (profile)
 
     @classmethod
     def build(cls, text: str, years: float, extra_skills: set[str] | None = None,
@@ -279,41 +282,105 @@ class ResumeProfile:
             skills = (skills | mi["add"]) - mi["remove"]
             if mi["degree"] is not None:
                 education = mi["degree"] or None
-        return cls(text=text, skills=skills | (extra_skills or set()), years=years, head=text[:400],
-                   education=education, terms=frozenset(_content_terms(text)))
+        from .ontology import implied_by
+        skills = skills | (extra_skills or set())
+        lines = tuple((ln.strip(" -•*\t"), frozenset(sk.extract_skills(ln))) for ln in text.splitlines()
+                      if len(ln.split()) >= 2)
+        return cls(text=text, skills=skills, years=years, head=text[:400], education=education,
+                   terms=frozenset(_content_terms(text)), implied=implied_by(skills), lines=lines,
+                   eligibility=dict((corrections or {}).get("eligibility") or {}))
 
 
-def _line_coverage(text: str, profile: ResumeProfile) -> tuple[Optional[float], list[str]]:
-    """Coverage 0-1 of one requirement line (None = can't judge), plus the skills it's missing."""
+def _evidence_for(profile: ResumeProfile, skills: list[str] = (), terms: set[str] = frozenset()) -> str:
+    """The resume line that best supports a requirement (for the requirement matrix)."""
+    if skills:
+        want = set(skills)
+        best = max(profile.lines, key=lambda x: len(want & x[1]), default=None)
+        if best and want & best[1]:
+            return best[0][:220]
+    if terms:
+        scored = [(len(terms & set(_content_terms(ln))), ln) for ln, _ in profile.lines]
+        n, ln = max(scored, default=(0, ""))
+        if n:
+            return ln[:220]
+    return ""
+
+
+def _line_assess(text: str, profile: ResumeProfile) -> Optional[dict]:
+    """One requirement line → {coverage, missing, how, via, evidence}; None if it can't be judged."""
     line_skills, _neg = sk.extract_posting_skills(text)
     if not line_skills and _neg:
-        return None, []                     # "No Java required": nothing to check on this line
+        return None                          # "No Java required": nothing to check on this line
     if line_skills:
-        owned = [s for s in line_skills if s in profile.skills]
-        missing = sorted(s for s in line_skills if s not in profile.skills)
+        from .ontology import credit
+        credits = {s: credit(s, profile.skills, profile.implied) for s in sorted(line_skills)}
+        owned = [s for s, c in credits.items() if c[0] >= 1.0]
+        missing = sorted(s for s, c in credits.items() if c[0] < 1.0)
+        via = [f"{s} (implied by {c[2]})" if c[1] == "implied" else f"{s} ~ you have {c[2]} (related)"
+               for s, c in credits.items() if c[1] in ("implied", "related")]
+        how = "related skill" if any(c[1] == "related" for c in credits.values()) else \
+              "implied skill" if any(c[1] == "implied" for c in credits.values()) else "exact skill"
+        ev = _evidence_for(profile, [s if credits[s][1] == "exact" else credits[s][2] for s in credits if credits[s][0] > 0])
         if owned and re.search(r"\bor\b|/|\beither\b|\bsimilar\b|\bequivalent\b", text, re.I):
-            return 1.0, []  # "Tableau or Power BI": one is enough
-        return len(owned) / len(line_skills), missing
+            return {"coverage": 1.0, "missing": [], "how": how, "via": via, "evidence": ev}   # "Tableau or Power BI"
+        best_alt = max((c[0] for c in credits.values()), default=0.0)
+        cov = sum(c[0] for c in credits.values()) / len(credits)
+        if re.search(r"\bor\b|/|\beither\b|\bsimilar\b|\bequivalent\b", text, re.I):
+            cov = max(cov, best_alt)         # alternatives: the best one counts
+        return {"coverage": cov, "missing": missing, "how": how if cov > 0 else "not found", "via": via, "evidence": ev}
     m = _LINE_YEARS.search(text)
     if m and re.search(r"experience|exp\b", text, re.I):
         need = int(m.group(1))
-        if need == 0:
-            return 1.0, []
-        return (min(1.0, profile.years / need) if profile.years else 0.3), []
+        cov = 1.0 if need == 0 else (min(1.0, profile.years / need) if profile.years else 0.3)
+        return {"coverage": cov, "missing": [], "how": "years check", "via": [],
+                "evidence": f"About {profile.years:.1f} years of dated experience on your resume." if profile.years else ""}
     if _DEGREE_CUE.search(_degree_text(text)):
         levels = [name for name, _, pat in _EDU if pat.search(_degree_text(text))]
         need = min((_EDU_RANK[n] for n in levels), default=2)
         have = _EDU_RANK.get(profile.education or "", 0)
-        return (1.0 if have >= need else (0.5 if _SOFTENER.search(text) else 0.0)), []
+        cov = 1.0 if have >= need else (0.5 if _SOFTENER.search(text) else 0.0)
+        return {"coverage": cov, "missing": [], "how": "degree check", "via": [],
+                "evidence": f"Highest degree found: {profile.education}." if profile.education else ""}
     terms = set(_content_terms(text))
     if len(terms) < 2:
-        return None, []
-    return len(terms & profile.terms) / len(terms), []
+        return None
+    hit = terms & profile.terms
+    cov = len(hit) / len(terms)
+    how, ev = ("term overlap" if hit else "not found"), (_evidence_for(profile, terms=terms) if hit else "")
+    sim, line, floor, span = _semantic_best(text, profile)   # embeddings (ROADMAP §6.5): wording differs, meaning matches
+    sem_cov = max(0.0, min(1.0, (sim - floor) / span))
+    if sem_cov > cov:
+        cov, how, ev = sem_cov, "semantic match", line[:220]
+    return {"coverage": cov, "missing": [], "how": how, "via": [], "evidence": ev}
+
+
+def _semantic_best(text: str, profile: ResumeProfile) -> tuple[float, str, float, float]:
+    """(best cosine, best resume line, credit floor, credit span) for one requirement line."""
+    from .ai import embed
+    emb = embed.get()
+    if getattr(profile, "_line_vecs", None) is None or profile._line_vecs[0] != emb.name:
+        lines = [ln for ln, _ in profile.lines if len(ln.split()) >= 4]
+        object.__setattr__(profile, "_line_vecs", (emb.name, lines, emb.embed(lines)))
+    _, lines, vecs = profile._line_vecs
+    if not lines:
+        return 0.0, "", emb.floor, emb.span
+    q = emb.embed([text])[0]
+    sims = [embed.cosine(q, v) for v in vecs]
+    i = max(range(len(sims)), key=sims.__getitem__)
+    return sims[i], lines[i], emb.floor, emb.span
+
+
+def _line_coverage(text: str, profile: ResumeProfile) -> tuple[Optional[float], list[str]]:
+    """Coverage 0-1 of one requirement line (None = can't judge), plus the skills it's missing."""
+    a = _line_assess(text, profile)
+    return (None, []) if a is None else (a["coverage"], a["missing"])
 
 
 def total_from(components: dict[str, float], penalty: float = 0.0, capped: bool = False) -> int:
     """The final 0-100 score from 0-1 components (single place the weights are applied)."""
-    total = sum(W[k] * components[k] for k in W) - penalty
+    from .calibration import apply, load
+    cal = load()          # fitted logistic calibration (ROADMAP §6.6) once ≥ 300 human-labelled pairs exist
+    total = (apply(components, cal) if cal else sum(W[k] * components[k] for k in W)) - penalty
     if capped:
         total = min(total, 0.45)
     return round(max(0.0, min(1.0, total)) * 100)
@@ -334,7 +401,8 @@ def requirement_coverage(reqs: list[dict]) -> Optional[float]:
     return sum((0.5 if r["preferred"] else 1.0) * r["coverage"] for r in reqs) / den
 
 
-def score_job(job: dict, profile: ResumeProfile, idf: Optional[dict[str, float]] = None) -> dict:
+def score_job(job: dict, profile: ResumeProfile, idf: Optional[dict[str, float]] = None,
+              location_ok: Optional[bool] = None) -> dict:
     desc = job.get("description") or ""
     title = job.get("title") or ""
     req_text, pref_text = split_requirements(desc)
@@ -359,10 +427,14 @@ def score_job(job: dict, profile: ResumeProfile, idf: Optional[dict[str, float]]
     else:
         matched_kw = missing_kw = []
 
-    matched = sorted(s for s in weights if s in profile.skills)
-    missing = sorted(s for s in weights if s not in profile.skills)
+    from .ontology import credit
+    credits = {s: credit(s, profile.skills, profile.implied) for s in weights}
+    matched = sorted(s for s in weights if credits[s][0] >= 1.0)
+    missing = sorted(s for s in weights if credits[s][0] < 1.0)
+    related = [{"skill": s, "via": credits[s][2], "credit": credits[s][0], "how": credits[s][1]}
+               for s in sorted(weights) if credits[s][1] in ("implied", "related")]
     if weights:
-        skill_score = sum(weights[s] for s in matched) / sum(weights.values())
+        skill_score = sum(weights[s] * credits[s][0] for s in weights) / sum(weights.values())
         if keyword_mode and (matched_kw or missing_kw):
             kw_score = len(matched_kw) / (len(matched_kw) + len(missing_kw))
             skill_score = (skill_score * len(weights) + kw_score * 3) / (len(weights) + 3)
@@ -378,14 +450,20 @@ def score_job(job: dict, profile: ResumeProfile, idf: Optional[dict[str, float]]
     ai_reqs = (job.get("features") or {}).get("requirements")
     lines = ([(r["text"], bool(r["preferred"])) for r in ai_reqs] if ai_reqs else
              requirement_lines(desc))          # computed once per job (ROADMAP D14)
+    from . import gates as gates_mod
+    detected = gates_mod.detect(desc, title)
     for text, preferred in lines:
-        cov, miss = _line_coverage(text, profile)
-        if cov is None:
+        if detected and gates_mod.is_gate_line(text, detected):
+            continue                         # stated gates are pass/fail/unknown, not score (ROADMAP §6.3)
+        a = _line_assess(text, profile)
+        if a is None:
             continue
+        cov = a["coverage"]
         w = 0.5 if preferred else 1.0
         num += w * cov
         den += w
-        reqs.append({"id": f"r{len(reqs) + 1}", "text": text, "preferred": preferred, "coverage": round(cov, 2), "missing": miss,
+        reqs.append({"id": f"r{len(reqs) + 1}", "text": text, "preferred": preferred, "coverage": round(cov, 2),
+                     "missing": a["missing"], "how": a["how"], "via": a["via"], "evidence": a["evidence"],
                      "status": "met" if cov >= 0.75 else "partial" if cov >= 0.35 else "missing"})
     req_score = num / den if den else skill_score
 
@@ -415,7 +493,12 @@ def score_job(job: dict, profile: ResumeProfile, idf: Optional[dict[str, float]]
             penalty += 0.02
     if req_yrs and not inferred and profile.years and profile.years < 0.6 * req_yrs:
         blockers.append(f"Asks for {req_yrs:.0f}+ years of experience; your resume shows about {profile.years:.0f}.")
-    required_missing = sorted(s for s in req_skills if s not in profile.skills)
+    required_missing = sorted(s for s in req_skills if credits.get(s, (0,))[0] < 1.0)
+    edu_line = next((t for t, _ in lines if edu_req and _DEGREE_CUE.search(_degree_text(t))), "")
+    job_gates = gates_mod.evaluate(
+        detected, profile.text, profile.eligibility, job.get("location", ""), location_ok,
+        {"required": edu_req, "strict": edu_strict, "need_rank": _EDU_RANK.get(edu_req or "", 0),
+         "have_rank": _EDU_RANK.get(profile.education or "", 0), "text": edu_line})
     low_conf = len(desc) < 80 or (not weights and not keyword_mode and not reqs)
     capped = len(desc) < 80        # title-only: can't judge skills fairly
     components = {"skills": skill_score, "requirements": req_score, "role": t_score,
@@ -429,6 +512,8 @@ def score_job(job: dict, profile: ResumeProfile, idf: Optional[dict[str, float]]
         "components": {k: round(v * 100) for k, v in components.items()},
         "penalty": penalty, "capped": capped,
         "matched_skills": matched, "missing_skills": missing, "required_missing": required_missing,
+        "related_skills": related, "gates": job_gates,
+        "gates_failed": [g["label"] for g in job_gates if g["status"] == "fail"],
         "matched_keywords": matched_kw, "missing_keywords": missing_kw, "negated_skills": negated,
         "requirements": reqs, "requirements_met": sum(1 for r in reqs if r["status"] == "met"),
         "blockers": blockers, "education_required": edu_req, "education_strict": edu_strict,
@@ -459,7 +544,12 @@ def aggregate(results: list[dict], profile: ResumeProfile, threshold: int) -> di
     return {
         "job_count": n,
         "avg_score": round(sum(scores) / n) if n else 0,
-        "qualifying": sum(1 for s in scores if s >= threshold),
+        # qualifying = score ≥ threshold AND no failed gate (ROADMAP §6.3); gates are reported separately
+        "qualifying": sum(1 for r in results if r["score"] >= threshold and not r.get("gates_failed")),
+        "score_qualifying": sum(1 for s in scores if s >= threshold),
+        "gate_failed": sum(1 for r in results if r["score"] >= threshold and r.get("gates_failed")),
+        "gate_breakdown": dict(Counter(g for r in results if r["score"] >= threshold for g in set(r.get("gates_failed") or []))),
+        "gate_unknown": dict(Counter(g["label"] for r in results for g in r.get("gates") or [] if g["status"] == "unknown")),
         "threshold": threshold,
         "distribution": buckets,
         "resume_skills": sorted(profile.skills),

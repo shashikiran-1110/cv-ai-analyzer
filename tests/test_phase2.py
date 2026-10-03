@@ -84,8 +84,8 @@ async def test_analyze_is_fast_with_slow_ai(client, resume_pdf, monkeypatch):  #
         return [Job(id=str(i), title="Data Engineer", company=f"C{i}", description=DESC + f" ref {i}") for i in range(100)]
     monkeypatch.setattr(linkedin, "search_jobs", many)
 
-    def slow_ai(request):
-        time.sleep(2.5)            # the AI call takes 2.5 s
+    async def slow_ai(request):
+        await asyncio.sleep(2.5)   # the AI call takes 2.5 s (async, like a real network wait)
         return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(
             {"summary": "s", "strengths": ["a"], "improvements": ["b"], "skills_to_learn": []})}}]})
     _mock_llm(monkeypatch, slow_ai)

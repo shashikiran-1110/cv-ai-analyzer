@@ -107,6 +107,10 @@ def test_full_flow(server, browser, resume_pdf):
     page.locator(".r-head").first.click()
     expect(page).to_have_url(re.compile(r"job="))
     expect(page.locator(".modal")).to_be_visible()
+    # requirement matrix (Phase 4): rows link to highlighted lines in the posting
+    expect(page.locator(".matrix tbody tr").first).to_be_visible()
+    page.locator(".matrix tbody tr").first.click()
+    expect(page.locator("[data-testid=posting] mark.pl").first).to_be_visible(timeout=5000)
     page.go_back()
     expect(page.locator(".modal")).to_have_count(0)
     page.reload()
@@ -116,6 +120,12 @@ def test_full_flow(server, browser, resume_pdf):
     # AI requirement lists (Phase 3 extractor): invented items are dropped server-side
     page.click("button:has-text('AI requirement lists')")
     expect(page.locator(".toast", has_text="AI requirement lists in use")).to_have_count(1, timeout=15000)
+
+    # hard requirements are reported separately from the score (Phase 4 gates)
+    page.click(".tabs button:has-text('Overview')")
+    expect(page.locator("[data-testid=gated]")).to_contain_text("hard requirement", timeout=5000)
+    page.click(".tabs button:has-text('Jobs')")
+    expect(page.locator(".tag.gate").first).to_be_visible()
 
     # profile review: add a skill the resume doesn't show, save, and the report re-scores with it
     page.click(".tabs button:has-text('Skills')")

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useAi } from "../ai";
 import { api } from "../api";
-import type { DeepResult, JobDetail, ScoredJob } from "../types";
+import type { DeepResult, Gate, JobDetail, ReqCheck, ScoredJob } from "../types";
 import { IconShield, IconWarn, StatusIcon } from "./Icons";
 import { SourceBadges } from "./SourceBadge";
 import { CopyButton, Markdown } from "./Markdown";
@@ -18,6 +18,14 @@ export function JobDrawer({ analysisId, job, threshold, onClose, onDeep }: { ana
   const ai = useAi();
   const [detail, setDetail] = useState<JobDetail | null>(null);
   const [showDesc, setShowDesc] = useState(false);
+  const [flash, setFlash] = useState<string | null>(null);
+  useEffect(() => {
+    if (!flash || !showDesc) return;
+    const el = document.getElementById(`pl-${flash}`);
+    el?.scrollIntoView({ behavior: "smooth", block: "center" });
+    const t = setTimeout(() => setFlash(null), 2200);
+    return () => clearTimeout(t);
+  }, [flash, showDesc, detail]);
   const [active, setActive] = useState<string>("");
   const s = useStream();
   const [deepBusy, setDeepBusy] = useState(false);
@@ -44,7 +52,7 @@ export function JobDrawer({ analysisId, job, threshold, onClose, onDeep }: { ana
       <div className="badges"><SourceBadges sources={job.sources} /></div>
       <div className="drawer-grid">
         <div className="score-big"><span className={`score ${job.score >= threshold ? "hi" : job.score >= threshold - 20 ? "mid" : "lo"}`}>{job.score}%</span>
-          <small>{job.score >= threshold ? "Qualified" : "Below threshold"}</small>
+          <small>{job.score < threshold ? "Below threshold" : job.gates_failed?.length ? "Fails a hard requirement" : "Qualified"}</small>
           {d && <small className="muted">rules only {d.det_score}%</small>}</div>
         <div>
           {([["Skills", job.components.skills], ["Requirements", job.components.requirements], ["Role fit", job.components.role],
@@ -53,7 +61,11 @@ export function JobDrawer({ analysisId, job, threshold, onClose, onDeep }: { ana
           ))}
         </div>
       </div>
-      {job.blockers.length > 0 && <Alert kind="warn"><IconWarn /> {job.blockers.join(" ")}</Alert>}
+      {job.gates && job.gates.length > 0 && <Gates gates={job.gates} />}
+      {(() => {   // a strict-degree blocker is already shown as a gate
+        const b = job.blockers.filter((x) => !(job.gates?.some((g) => g.type === "degree") && /degree/i.test(x)));
+        return b.length > 0 && <Alert kind="warn"><IconWarn /> {b.join(" ")}</Alert>;
+      })()}
       {job.negated_skills.length > 0 && <small className="muted">Not required by this posting (it says so): {job.negated_skills.join(", ")}</small>}
 
       <h3 className="sec"><IconShield /> Deep AI check {d && <span className={`tag ${d.verdict === "strong" || d.verdict === "possible" ? "q" : "nq"}`}>{d.verdict || "done"}</span>}</h3>
@@ -87,13 +99,8 @@ export function JobDrawer({ analysisId, job, threshold, onClose, onDeep }: { ana
       </>}
 
       {job.requirements.length > 0 && <>
-        <h3 className="sec">Requirement checklist <small className="muted">(rules-based: {job.requirements_met}/{job.requirements.length} met)</small></h3>
-        <ul className="reqlist">
-          {job.requirements.map((r) => (
-            <li key={r.id}><StatusIcon s={r.status} /><div>{r.text} {r.preferred && <small className="muted">(nice to have)</small>}
-              {r.missing.length > 0 && <div className="small miss-line">missing: {r.missing.join(", ")}</div>}</div></li>
-          ))}
-        </ul>
+        <h3 className="sec">Requirement matrix <small className="muted">({job.requirements_met}/{job.requirements.length} met · click a row to see it in the posting)</small></h3>
+        <Matrix reqs={job.requirements} onPick={(id) => { setShowDesc(true); setFlash(id); }} />
       </>}
       <Chips label="You have" items={[...job.matched_skills, ...job.matched_keywords]} tone="ok" />
       <Chips label="Required, missing" items={job.required_missing} tone="miss" />
@@ -119,7 +126,66 @@ export function JobDrawer({ analysisId, job, threshold, onClose, onDeep }: { ana
       )}
 
       <h3 className="sec"><button className="link" onClick={() => setShowDesc(!showDesc)} aria-expanded={showDesc}>{showDesc ? "▾" : "▸"} Job description</button></h3>
-      {showDesc && <pre className="desc">{detail?.description || "No description available."}</pre>}
+      {showDesc && (detail?.description ? <Posting text={detail.description} reqs={job.requirements} gates={job.gates ?? []} flash={flash} />
+        : <pre className="desc">No description available.</pre>)}
     </Modal>
+  );
+}
+
+const HOW_LABEL: Record<string, string> = {
+  "exact skill": "Exact skill", "implied skill": "Implied skill", "related skill": "Related skill (partial)",
+  "years check": "Years check", "degree check": "Degree check", "term overlap": "Shared terms", "semantic match": "Similar meaning",
+  "not found": "Not found",
+};
+
+function Gates({ gates }: { gates: Gate[] }) {
+  return (
+    <div className="gates" data-testid="gates">
+      <h3 className="sec">Hard requirements <small className="muted">(pass / fail / unknown, separate from the score)</small></h3>
+      <ul>{gates.map((g, i) => (
+        <li key={i} className={`gate-${g.status}`}>
+          <span className="gate-pill">{g.status === "pass" ? "✓ pass" : g.status === "fail" ? "✕ fail" : "? unknown"}</span>
+          <div><b>{g.label}{g.need ? `: ${g.need}` : ""}</b><div className="small muted">“{g.text}”</div><div className="small">{g.reason}</div></div>
+        </li>))}</ul>
+    </div>
+  );
+}
+
+function Matrix({ reqs, onPick }: { reqs: ReqCheck[]; onPick: (id: string) => void }) {
+  return (
+    <div className="matrix-wrap">
+      <table className="matrix">
+        <thead><tr><th>Requirement</th><th>Status</th><th>Evidence from your resume</th><th>Decided by</th></tr></thead>
+        <tbody>{reqs.map((r) => (
+          <tr key={r.id} onClick={() => onPick(r.id)} tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter") onPick(r.id); }}>
+            <td>{r.text} {r.preferred && <small className="muted">(nice to have)</small>}</td>
+            <td><span className={`st st-${r.status}`}><StatusIcon s={r.status} /> {r.status}</span></td>
+            <td>{r.evidence ? <q>{r.evidence}</q> : <span className="muted">—</span>}
+              {r.missing.length > 0 && <div className="small miss-line">missing: {r.missing.join(", ")}</div>}
+              {r.via?.map((v) => <div key={v} className="small via">{v}</div>)}</td>
+            <td><small>{HOW_LABEL[r.how ?? ""] ?? r.how ?? "Rules"}</small></td>
+          </tr>))}</tbody>
+      </table>
+    </div>
+  );
+}
+
+const norm = (x: string) => x.toLowerCase().replace(/^[\s\-•*·▪◦●]+/, "").replace(/\s+/g, " ").trim();
+
+/** The posting with every judged requirement highlighted by status, and gate sentences marked. */
+function Posting({ text, reqs, gates, flash }: { text: string; reqs: ReqCheck[]; gates: Gate[]; flash: string | null }) {
+  const lines = text.split("\n");
+  const reqFor = (ln: string) => { const n = norm(ln); return n.length > 2 ? reqs.find((r) => { const t = norm(r.text); return n.includes(t) || (t.includes(n) && n.length > 12); }) : undefined; };
+  const gateFor = (ln: string) => { const n = norm(ln); return n.length > 2 ? gates.find((g) => n.includes(norm(g.text)) && g.text.length > 4) : undefined; };
+  return (
+    <div className="desc posting" data-testid="posting">
+      {lines.map((ln, i) => {
+        const r = reqFor(ln), g = r ? undefined : gateFor(ln);
+        if (r) return <mark key={i} id={`pl-${r.id}`} className={`pl st-${r.status} ${flash === r.id ? "flash" : ""}`}>{ln}{"\n"}</mark>;
+        if (g) return <mark key={i} className={`pl gate-${g.status}`}>{ln}{"\n"}</mark>;
+        return <span key={i}>{ln}{"\n"}</span>;
+      })}
+      <div className="legend small"><mark className="pl st-met">met</mark> <mark className="pl st-partial">partial</mark> <mark className="pl st-missing">missing</mark> <mark className="pl gate-fail">hard requirement</mark></div>
+    </div>
   );
 }

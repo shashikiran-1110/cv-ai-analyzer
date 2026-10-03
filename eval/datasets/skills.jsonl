@@ -38,3 +38,18 @@
 {"kind": "posting", "text": "We are an agile team that moves fast and values swift decisions", "skills": ["Agile"], "negated": []}
 {"kind": "posting", "text": "Spring/Summer 2026 internship programme for students", "skills": [], "negated": [], "trap": true}
 {"kind": "posting", "text": "Experience with Spring Framework (Java) and Kafka", "skills": ["Spring", "Java", "Kafka"], "negated": []}
+{"kind": "resume", "domain": "healthcare", "text": "Registered nurse on a 30-bed ICU; medication administration, patient assessment and care planning", "skills": ["Nursing", "Critical Care", "Medication Administration", "Patient Assessment", "Care Planning"]}
+{"kind": "posting", "domain": "healthcare", "text": "BLS and ACLS required. Phlebotomy experience preferred. Epic EHR documentation.", "skills": ["BLS/ACLS", "Phlebotomy", "EHR"], "negated": []}
+{"kind": "resume", "domain": "healthcare", "text": "Triage nurse in A&E; infection control lead; fluent in medical terminology", "skills": ["Triage", "Infection Control", "Medical Terminology", "Nursing"]}
+{"kind": "resume", "domain": "finance", "text": "Ran month-end close, bank reconciliations and accounts payable in Xero; prepared VAT returns", "skills": ["Reconciliation", "Accounts Payable", "Bookkeeping", "Tax"]}
+{"kind": "posting", "domain": "finance", "text": "FP&A analyst: variance analysis, budgeting and financial modelling in Excel", "skills": ["FP&A", "Budgeting", "Financial Modeling", "Excel"], "negated": []}
+{"kind": "resume", "domain": "finance", "text": "External audit engagements for listed clients; IFRS financial statements", "skills": ["Auditing", "Accounting", "Financial Reporting"]}
+{"kind": "resume", "domain": "legal", "text": "Contract drafting and due diligence for M&A transactions; legal research on Westlaw", "skills": ["Contract Drafting", "Due Diligence", "Corporate Law", "Legal Research"]}
+{"kind": "posting", "domain": "legal", "text": "Commercial litigation associate; intellectual property experience a plus", "skills": ["Litigation", "Intellectual Property"], "negated": []}
+{"kind": "resume", "domain": "trades", "text": "Electrician: electrical installation, blueprint reading, preventive maintenance and OSHA compliance", "skills": ["Electrical Installation", "Blueprint Reading", "Preventive Maintenance", "OSHA Safety", "Compliance"]}
+{"kind": "posting", "domain": "trades", "text": "MIG welding and CNC machining; forklift certificate required", "skills": ["Welding", "CNC Machining", "Forklift Operation"], "negated": []}
+{"kind": "resume", "domain": "education", "text": "Secondary teacher: lesson planning, classroom management, IEPs for special education students", "skills": ["Lesson Planning", "Classroom Management", "Special Education"]}
+{"kind": "posting", "domain": "education", "text": "Curriculum development and e-learning on Moodle; formative assessment", "skills": ["Curriculum Development", "E-learning", "Student Assessment"], "negated": []}
+{"kind": "resume", "domain": "retail", "text": "Store supervisor: visual merchandising, stock control, cash handling and customer service", "skills": ["Retail Operations", "Inventory Management", "POS Systems", "Customer Support"]}
+{"kind": "posting", "domain": "sales", "text": "Outbound prospecting and cold calling; Salesforce pipeline management", "skills": ["Cold Calling", "Salesforce", "Sales Forecasting"], "negated": []}
+{"kind": "resume", "domain": "healthcare", "trap": true, "text": "We triage support tickets and track pre-tax benefits via payroll deductions", "skills": []}

@@ -15,7 +15,8 @@ Requirements
 • Bachelor's degree in Computer Science or a related field
 Nice to have
 • Kubernetes and Terraform
-• dbt and Snowflake"""),
+• dbt and Snowflake
+This role is on-site in our London office 4 days a week, required."""),
     ("Data Engineer", "Blue Harbor Bank", "Remote (Europe)", "Full-time", """What you'll do
 Build reliable ETL pipelines and data products for risk and finance teams.
 What we're looking for
@@ -25,7 +26,8 @@ What we're looking for
 • Git, CI/CD and unit testing
 • Clear communication with stakeholders
 Bonus
-• Kafka, Airflow, Terraform"""),
+• Kafka, Airflow, Terraform
+You must have the right to work in the UK; we are unable to sponsor visas."""),
     ("Analytics Engineer", "Tidewater Retail", "Manchester, UK", "Full-time", """Responsibilities
 Own our dbt project and the semantic layer used by 200+ analysts.
 Requirements

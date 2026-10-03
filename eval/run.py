@@ -15,7 +15,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from app import matcher, resume, skills
+from app import gates, matcher, resume, skills
 from app.jobmodel import Job
 from app.sources import JobQuery, aggregate
 
@@ -29,6 +29,7 @@ HEADLINE = {
     "skills.f1": ("+", 0.01), "skills.trap_pass_rate": ("+", 0.0), "skills.negation_accuracy": ("+", 0.0),
     "experience.mae_months": ("-", 0.5), "experience.within_1_month": ("+", 0.0),
     "education.accuracy": ("+", 0.0), "location.accuracy": ("+", 0.0),
+    "gates.f1": ("+", 0.01), "skills.f1_nontech": ("+", 0.02),
     "requirements.f1": ("+", 0.01), "requirements.holdout_f1": ("+", 0.01), "fairness.identical_rate": ("+", 0.0),
 }
 
@@ -55,7 +56,16 @@ def suite_skills() -> dict:
             fails.append({"text": c["text"], "expected": sorted(c["skills"]), "got": sorted(pred),
                           **({"expected_negated": c.get("negated", []), "got_negated": sorted(neg)} if c["kind"] == "posting" else {}),
                           **({"note": c["note"]} if c.get("note") else {})})
+    # ROADMAP §15 Phase 4: non-tech occupations' F1 within 10 points of tech
+    by_dom: dict[str, list[int]] = {"tech": [0, 0, 0], "nontech": [0, 0, 0]}
+    for c in _load("skills.jsonl"):
+        pred = skills.extract_posting_skills(c["text"])[0] if c["kind"] == "posting" else skills.extract_skills(c["text"])
+        d = by_dom["tech" if c.get("domain", "tech") == "tech" else "nontech"]
+        for i, v in enumerate(M.set_counts(pred, c["skills"])):
+            d[i] += v
+    f_tech, f_non = M.prf(*by_dom["tech"])["f1"], M.prf(*by_dom["nontech"])["f1"]
     return {"metrics": {**M.prf(tp, fp, fn), "trap_pass_rate": M.accuracy(traps), "negation_accuracy": M.accuracy(neg_ok),
+                        "f1_tech": f_tech, "f1_nontech": f_non, "nontech_gap": round(f_tech - f_non, 4),
                         "cases": len(_load("skills.jsonl"))}, "failures": fails}
 
 
@@ -158,6 +168,20 @@ def suite_fairness() -> dict:
             "failures": fails}
 
 
+def suite_gates() -> dict:
+    """Hard-requirement detection (ROADMAP §6.3): (type, need) pairs per posting snippet."""
+    tp = fp = fn = 0
+    fails = []
+    for c in _load("gates.jsonl"):
+        pred = {(g["type"], g["need"]) for g in gates.detect(c["text"])}
+        gold = {tuple(g) for g in c["gates"]}
+        t, f_, n = M.set_counts(pred, gold)
+        tp, fp, fn = tp + t, fp + f_, fn + n
+        if pred != gold:
+            fails.append({"text": c["text"], "expected": sorted(gold), "got": sorted(pred)})
+    return {"metrics": {**M.prf(tp, fp, fn), "cases": len(_load("gates.jsonl"))}, "failures": fails}
+
+
 def suite_match() -> dict:
     """Score vs human label on labelled resume–job pairs (eval/datasets/match/pairs.jsonl). See its README."""
     pairs = [p for p in _load("match/pairs.jsonl") if p.get("label") and p.get("reviewed")]
@@ -179,7 +203,8 @@ def suite_match() -> dict:
 
 
 SUITES = {"skills": suite_skills, "experience": suite_experience, "education": suite_education,
-          "location": suite_location, "requirements": suite_requirements, "fairness": suite_fairness, "match": suite_match}
+          "location": suite_location, "requirements": suite_requirements, "gates": suite_gates, "fairness": suite_fairness,
+          "match": suite_match}
 
 
 def run(names: list[str]) -> dict:

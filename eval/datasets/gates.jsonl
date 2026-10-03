@@ -1,0 +1,20 @@
+{"text": "You must be authorized to work in the United States. We do not offer visa sponsorship.", "gates": [["authorization", "US"]]}
+{"text": "Applicants must have the right to work in the UK.", "gates": [["authorization", "UK"]]}
+{"text": "Must be a US citizen. Active Secret clearance required.", "gates": [["authorization", "US"], ["clearance", "SECRET"]]}
+{"text": "TS/SCI clearance with polygraph required for this position.", "gates": [["clearance", "TS/SCI"]]}
+{"text": "Security clearance is a plus but not required.", "gates": []}
+{"text": "Active RN license in the state of Texas required. BLS certification.", "gates": [["license", "Registered Nurse licence"]]}
+{"text": "CPA required; Big 4 experience preferred.", "gates": [["license", "CPA / chartered accountant"]]}
+{"text": "Must be admitted to the bar in New York.", "gates": [["license", "Bar admission / practising certificate"]]}
+{"text": "Class A CDL and a clean driving record are required.", "gates": [["license", "Commercial driver's licence (CDL/HGV)"]]}
+{"text": "Qualified Teacher Status (QTS) is essential.", "gates": [["license", "Teaching licence (QTS)"]]}
+{"text": "Fluent German is required; English is a plus.", "gates": [["language", "German"]]}
+{"text": "Business-level Japanese and English.", "gates": [["language", "Japanese"]]}
+{"text": "French is nice to have.", "gates": []}
+{"text": "This role is fully on-site in our Austin office.", "gates": [["onsite", ""]]}
+{"text": "Hybrid: in the office 3 days a week, required.", "gates": [["onsite", ""]]}
+{"text": "Remote-first team across Europe; we sponsor visas where needed.", "gates": []}
+{"text": "Experience with secret management (Vault) and clearance of backlog tickets.", "gates": []}
+{"text": "We cannot sponsor visas for this role.", "gates": [["authorization", ""]]}
+{"text": "Python, SQL and AWS. Great benefits, pre-tax commuter program.", "gates": []}
+{"text": "Series 7 and 63 licenses required within 90 days.", "gates": [["license", "FINRA Series licence"]]}

@@ -457,7 +457,13 @@ def _compute(a: dict, extra: list[str], threshold: int) -> dict:
     profile = matcher.ResumeProfile.build(a["resume_text"], a["years"], set(extra), a.get("corrections") or None)
     if "idf" not in a:  # corpus statistics for semantic similarity: these postings + the resume
         a["idf"] = matcher.corpus_idf([j.get("description") or "" for j in a["jobs_full"]] + [a["resume_text"]])
-    results = [matcher.score_job(j, profile, a["idf"]) for j in a["jobs_full"]]
+    q = src.JobQuery(title=a["query"].get("title", ""), location=a["query"].get("location", "") or "")
+    def loc_ok(j: dict) -> Optional[bool]:
+        if not q.location:
+            return None
+        return aggregate.location_ok(Job(id=j["id"], title=j.get("title", ""), company=j.get("company", ""),
+                                         location=j.get("location", ""), remote=j.get("remote")), q)
+    results = [matcher.score_job(j, profile, a["idf"], loc_ok(j)) for j in a["jobs_full"]]
     for r in results:  # merge verified AI judgments (Deep Verifier v2); the engine recomputes the score
         r["score_det"] = r["score"]
         stored = a.get("deep", {}).get(r["id"])
@@ -776,12 +782,23 @@ class RoleFix(BaseModel):
     ignore: bool = False
 
 
+class Eligibility(BaseModel):
+    work_countries: list[Literal["US", "UK", "EU", "Canada", "Australia", "Germany", "India", "Ireland", "Netherlands",
+                                 "France", "Singapore", "New Zealand"]] = Field(default=[], max_length=12)
+    needs_sponsorship: Optional[bool] = None
+    clearance: Optional[str] = Field(default=None, max_length=40)
+    licenses: list[str] = Field(default=[], max_length=20)
+    languages: list[str] = Field(default=[], max_length=20)
+    relocate: Optional[bool] = None
+
+
 class Corrections(BaseModel):
     roles: dict[str, RoleFix] = Field(default={}, max_length=40)
     skills_add: list[str] = Field(default=[], max_length=60)
     skills_remove: list[str] = Field(default=[], max_length=60)
     degree: Optional[Literal["", "Bachelor's", "Master's", "PhD"]] = None
     years_override: Optional[float] = Field(default=None, ge=0, le=60)
+    eligibility: Optional[Eligibility] = None
 
 
 def _owned_resume(rid: str, request: Request) -> dict:
@@ -814,6 +831,11 @@ async def patch_profile(rid: str, body: Corrections, request: Request):
         corr["roles"] = {k: v.model_dump(exclude_none=True) for k, v in body.roles.items()}
         corr["skills_add"] = [x for x in (s.strip()[:60] for s in body.skills_add) if x]
         corr["skills_remove"] = [x for x in (s.strip()[:60] for s in body.skills_remove) if x]
+        if body.eligibility is not None:
+            el = body.eligibility.model_dump(exclude_none=True)
+            el["licenses"] = [x.strip()[:60] for x in body.eligibility.licenses if x.strip()]
+            el["languages"] = [x.strip()[:30] for x in body.eligibility.languages if x.strip()]
+            corr["eligibility"] = {k: v for k, v in el.items() if v not in ([], "", None)}
         corr = {k: v for k, v in corr.items() if v not in ({}, [])}
         db.save_corrections(rid, corr)
         r["corrections"] = corr

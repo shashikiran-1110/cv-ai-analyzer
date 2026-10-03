@@ -23,7 +23,11 @@ export interface SearchStatus {
   error: string | null; query: SearchQuery; jobs?: JobSummary[]; warnings?: string[]; sources?: SourceStat[]; cached?: boolean;
   linkedin?: { stage: string; done: number; total: number } | null;
 }
-export interface ReqCheck { id: string; text: string; preferred: boolean; coverage: number; missing: string[]; status: "met" | "partial" | "missing" }
+export interface ReqCheck {
+  id: string; text: string; preferred: boolean; coverage: number; missing: string[]; status: "met" | "partial" | "missing";
+  how?: string; via?: string[]; evidence?: string;
+}
+export interface Gate { type: string; label: string; need: string; text: string; status: "pass" | "fail" | "unknown"; reason: string }
 export interface DeepReq {
   id: string; requirement: string; importance: "must" | "nice"; preferred: boolean; coverage: number;
   det_status: "met" | "partial" | "missing" | null; ai_status: "met" | "partial" | "missing" | "not assessed";
@@ -43,6 +47,7 @@ export interface ScoredJob {
   matched_keywords: string[]; missing_keywords: string[];
   requirements: ReqCheck[]; requirements_met: number; blockers: string[]; education_required: string | null; negated_skills: string[];
   required_years: number | null; required_years_inferred: boolean; confidence: "high" | "low"; deep?: DeepResult;
+  gates?: Gate[]; gates_failed?: string[]; related_skills?: { skill: string; via: string; credit: number; how: string }[];
 }
 export interface SkillStat { skill: string; category: string; jobs: number; pct: number }
 export interface Summary {
@@ -50,6 +55,7 @@ export interface Summary {
   resume_skills: string[]; resume_years: number; resume_education: string | null; skill_gaps: SkillStat[];
   skill_strengths: SkillStat[]; unused_skills: string[]; common_blockers: { text: string; jobs: number }[];
   by_source: Record<string, number>;
+  score_qualifying?: number; gate_failed?: number; gate_breakdown?: Record<string, number>; gate_unknown?: Record<string, number>;
 }
 export interface LearnItem { skill: string; why: string; how?: string; jobs?: number | null }
 export interface Insights {
@@ -85,9 +91,12 @@ export interface StructuredProfile {
   experience_months: { total: number; explicit_years: number }; parse: { warnings: string[]; confidence: number };
 }
 export interface RoleFix { title?: string; company?: string; start?: string; end?: string; ignore?: boolean }
+export interface Eligibility {
+  work_countries?: string[]; needs_sponsorship?: boolean; clearance?: string; licenses?: string[]; languages?: string[]; relocate?: boolean;
+}
 export interface Corrections {
   roles?: Record<string, RoleFix>; skills_add?: string[]; skills_remove?: string[];
-  degree?: "" | "Bachelor's" | "Master's" | "PhD"; years_override?: number;
+  degree?: "" | "Bachelor's" | "Master's" | "PhD"; years_override?: number; eligibility?: Eligibility;
 }
 export interface ProfileView {
   resume_id: string; parsed: StructuredProfile; profile: StructuredProfile; corrections: Corrections;

@@ -121,8 +121,14 @@ _RAW: dict[str, dict[str, list[str]]] = {
     },
 }
 
+# ROADMAP §6.4 domain packs (healthcare, finance, legal, trades, education, retail) extend the taxonomy
+from .ontology.packs import PACKS as _PACKS  # noqa: E402
+
+for _cat, _skills in _PACKS.items():
+    _RAW.setdefault(_cat, {}).update(_skills)
+
 NO_CANON_ALIAS = {"Sales", "Recruiting", "Sketch", "Certifications", "Prototyping",
-                  "Swift", "Ruby", "Spring", "Rails", "Spark", "Agile"}
+                  "Swift", "Ruby", "Spring", "Rails", "Spark", "Agile", "Tax", "Triage", "Auditing", "Tutoring"}
 
 # ROADMAP D4: everyday words that are also skills count only with a context word within ±CONTEXT_WINDOW tokens.
 CONTEXT_WINDOW = 8
@@ -152,11 +158,23 @@ _NEG_AFTER = re.compile(r"^\W*(?:\w+\W+){0,4}?(?:is\s+|are\s+)?(?:not|n't)\s+(?:
 SOFT_CATEGORY = "Professional Skills"
 
 
+def _imported_aliases() -> dict[str, list[str]]:
+    """Extra aliases from ESCO / O*NET (scripts/load_ontology.py), if that data has been imported."""
+    from .ontology import DATA
+    try:
+        import json
+        return json.loads((DATA / "aliases.json").read_text())
+    except (OSError, ValueError):
+        return {}
+
+
 @lru_cache(maxsize=1)
 def _compiled() -> list[tuple[str, str, re.Pattern]]:
     out = []
+    extra = _imported_aliases()
     for category, skills in _RAW.items():
         for canon, aliases in skills.items():
+            aliases = aliases + [a for a in extra.get(canon, []) if not a.startswith("re:")]
             # short canonical names ("R", "Go", "C") are ambiguous words; they match only via explicit aliases
             # skills whose canonical name is also an everyday word match only via their explicit aliases
             auto = len(canon) > 2 and canon not in NO_CANON_ALIAS and not any(a.startswith("re:") for a in aliases)
@@ -168,8 +186,20 @@ def _compiled() -> list[tuple[str, str, re.Pattern]]:
             body = "|".join(a[3:] if a.startswith("re:") else re.escape(a) for a in alts)
             # group the alternation so the boundary guards apply to every alias, not just the first/last
             pat = re.compile(rf"(?<![A-Za-z0-9_+#.])(?:{body})(?![A-Za-z0-9_+#]|\.[A-Za-z0-9])", re.IGNORECASE)
-            out.append((canon, category, pat))
+            out.append((canon, category, pat, _anchors(alts)))
     return out
+
+
+def _anchors(alts: list[str]) -> tuple[str, ...]:
+    """Cheap substring pre-filter: a pattern can only match if one of these literal prefixes is in the text.
+    An empty tuple means "always run the regex" (no safe literal prefix)."""
+    out = []
+    for a in alts:
+        lit = re.match(r"[a-z0-9 ]+", a[3:] if a.startswith("re:") else a)
+        if not lit or len(lit.group(0).strip()) < 1:
+            return ()
+        out.append(lit.group(0).strip().split(" ")[0])
+    return tuple(sorted(set(out)))
 
 
 def category_of(skill: str) -> str:
@@ -191,13 +221,17 @@ def _has_context(text: str, start: int, end: int, ctx: set[str]) -> bool:
     return any(t.lower().strip(".-") in ctx for t in before + after)
 
 
-def _matches(text: str) -> list[tuple[str, int, int]]:
-    """Every (skill, start, end) occurrence, after removing season-year phrases and applying context rules."""
+@lru_cache(maxsize=8192)
+def _matches(text: str) -> tuple[tuple[str, int, int], ...]:
+    """Every (skill, start, end) occurrence, after removing season-year phrases and applying context rules.
+    Memoized: rescoring (what-if skills, deep checks) re-reads the same postings many times."""
     clean = _SEASON_YEAR.sub(lambda m: " " * len(m.group(0)), text)   # keep offsets stable
-    out = [(canon, m.start(), m.end()) for canon, _, pat in _compiled() for m in pat.finditer(clean)]
+    low = clean.lower()
+    out = [(canon, m.start(), m.end()) for canon, _, pat, anchors in _compiled()
+           if not anchors or any(a in low for a in anchors) for m in pat.finditer(clean)]
     for canon, pat, ctx in _ambiguous_compiled():
         out += [(canon, m.start(), m.end()) for m in pat.finditer(clean) if _has_context(clean, m.start(), m.end(), ctx)]
-    return out
+    return tuple(out)
 
 
 def _negated(text: str, start: int, end: int) -> bool:

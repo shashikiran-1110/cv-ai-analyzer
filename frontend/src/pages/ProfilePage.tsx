@@ -6,7 +6,12 @@ import { SkillPicker } from "../components/SkillPicker";
 import { Skeleton } from "../components/Skeleton";
 import { useToast } from "../components/Toast";
 import { Alert } from "../components/ui";
-import type { Corrections, ProfileRole, ProfileView, RoleFix } from "../types";
+import type { Corrections, Eligibility, ProfileRole, ProfileView, RoleFix } from "../types";
+
+const COUNTRIES = ["US", "UK", "EU", "Canada", "Australia", "Germany", "India", "Ireland", "Netherlands", "France", "Singapore", "New Zealand"];
+const triState = (v: boolean | undefined) => (v === undefined ? "" : v ? "yes" : "no");
+const fromTri = (v: string) => (v === "" ? undefined : v === "yes");
+const list = (v: string) => v.split(",").map((x) => x.trim()).filter(Boolean);
 
 const STRENGTH_ORDER = ["strong", "moderate", "user", "weak"];
 const STRENGTH_LABEL: Record<string, string> = {
@@ -27,6 +32,9 @@ export function ProfilePage() {
   const [draft, setDraft] = useState<Corrections | null>(null);
   const [saving, setSaving] = useState(false);
   useEffect(() => { if (q.data && draft === null) setDraft(q.data.corrections); }, [q.data, draft]);
+  useEffect(() => {   // deep link: /profile/:rid#eligibility
+    if (draft && location.hash) document.getElementById(location.hash.slice(1))?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [draft === null]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const dirty = useMemo(() => !!q.data && !!draft && JSON.stringify(draft) !== JSON.stringify(q.data.corrections), [q.data, draft]);
 
@@ -55,6 +63,15 @@ export function ProfilePage() {
     } catch (e) { toast((e as Error).message, "error"); } finally { setSaving(false); }
   }
 
+  const el: Eligibility = draft.eligibility ?? {};
+  const setEl = (patch: Partial<Eligibility>) => {
+    const next: Eligibility = { ...el, ...patch };
+    (Object.keys(next) as (keyof Eligibility)[]).forEach((k) => {
+      const v = next[k];
+      if (v === undefined || v === "" || (Array.isArray(v) && v.length === 0)) delete next[k];
+    });
+    setDraft({ ...draft, eligibility: next });
+  };
   const groups = STRENGTH_ORDER.map((s) => [s, p.skills.filter((x) => x.strength === s)] as const).filter(([, xs]) => xs.length);
   const okCount = v.formatting.filter((c) => c.ok).length;
   return (
@@ -116,6 +133,29 @@ export function ProfilePage() {
                   <option value="">None</option><option>Bachelor's</option><option>Master's</option><option>PhD</option>
                 </select></label>
             </div>
+          </div>
+          <div className="card" id="eligibility">
+            <h2>Eligibility (hard requirements)</h2>
+            <p className="muted">Used only to check postings' hard requirements (work authorisation, clearance, licences, languages, on-site). Unanswered items stay “unknown”, never “fail”.</p>
+            <fieldset className="countries"><legend>Authorised to work in</legend>
+              {COUNTRIES.map((c) => (
+                <label key={c} className="check small"><input type="checkbox" checked={!!el.work_countries?.includes(c)}
+                  onChange={(e) => setEl({ work_countries: e.target.checked ? [...(el.work_countries ?? []), c] : (el.work_countries ?? []).filter((x) => x !== c) })} /> {c}</label>))}
+            </fieldset>
+            <div className="row-fields">
+              <label className="field"><span>Need visa sponsorship?</span>
+                <select value={triState(el.needs_sponsorship)} onChange={(e) => setEl({ needs_sponsorship: fromTri(e.target.value) })}>
+                  <option value="">Not set</option><option value="no">No</option><option value="yes">Yes</option></select></label>
+              <label className="field"><span>Open to relocating for on-site roles?</span>
+                <select value={triState(el.relocate)} onChange={(e) => setEl({ relocate: fromTri(e.target.value) })}>
+                  <option value="">Not set</option><option value="yes">Yes</option><option value="no">No</option></select></label>
+              <label className="field"><span>Security clearance held</span>
+                <input value={el.clearance ?? ""} placeholder="e.g. TS/SCI, SC, DV" maxLength={40} onChange={(e) => setEl({ clearance: e.target.value || undefined })} /></label>
+              <label className="field"><span>Languages (comma-separated)</span>
+                <input key={`l-${(el.languages ?? []).join()}`} defaultValue={(el.languages ?? []).join(", ")} placeholder="e.g. English, German" onBlur={(e) => setEl({ languages: list(e.target.value) })} /></label>
+            </div>
+            <label className="field"><span>Licences & certifications (comma-separated)</span>
+              <input key={`c-${(el.licenses ?? []).join()}`} defaultValue={(el.licenses ?? []).join(", ")} placeholder="e.g. RN license, CPA, CDL Class A" onBlur={(e) => setEl({ licenses: list(e.target.value) })} /></label>
           </div>
         </div>
 

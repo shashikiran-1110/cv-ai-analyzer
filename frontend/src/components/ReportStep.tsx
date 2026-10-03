@@ -19,6 +19,8 @@ type Tab = "overview" | "jobs" | "skills" | "assistant";
 const TABS: [Tab, string][] = [["overview", "Overview"], ["jobs", "Jobs"], ["skills", "Skills & what-if"], ["assistant", "AI assistant"]];
 const BUCKETS = ["0–19", "20–39", "40–59", "60–79", "80+"];
 type Partial_ = Pick<Analysis, "summary" | "jobs">;
+/** Qualifies = score at/above the threshold and no failed gate (ROADMAP §6.3); gates never change the score. */
+const qualifies = (j: Pick<ScoredJob, "score" | "gates_failed">, t: number) => j.score >= t && !(j.gates_failed?.length);
 
 export function ReportStep({ initial, notes = [] }: { initial: Analysis; notes?: string[] }) {
   const ai = useAi();
@@ -52,12 +54,18 @@ export function ReportStep({ initial, notes = [] }: { initial: Analysis; notes?:
   const [err, setErr] = useState("");
   const [deep, setDeep] = useState<{ running: boolean; done: number; total: number; errors: string[] }>({ running: false, done: 0, total: 0, errors: [] });
   const stopDeep = useRef(false);
-  const baseline = useRef(new Map(initial.jobs.map((j) => [j.id, j.score])));
+  const baseline = useRef(new Map(initial.jobs.map((j) => [j.id, { score: j.score, gates_failed: j.gates_failed }])));
   const timer = useRef<number>(0);
   const seq = useRef(0);
 
-  const qualifying = useMemo(() => a.jobs.filter((j) => j.score >= threshold).length, [a.jobs, threshold]);
-  const baseQual = useMemo(() => [...baseline.current.values()].filter((s) => s >= threshold).length, [threshold]);
+  const qualifying = useMemo(() => a.jobs.filter((j) => qualifies(j, threshold)).length, [a.jobs, threshold]);
+  const baseQual = useMemo(() => [...baseline.current.values()].filter((j) => qualifies(j, threshold)).length, [threshold]);
+  const gated = useMemo(() => {
+    const by: Record<string, number> = {};
+    const hit = a.jobs.filter((j) => j.score >= threshold && j.gates_failed?.length);
+    hit.forEach((j) => new Set(j.gates_failed).forEach((g) => { by[g] = (by[g] || 0) + 1; }));
+    return { count: hit.length, by };
+  }, [a.jobs, threshold]);
   const dist = useMemo(() => { const d = [0, 0, 0, 0, 0]; a.jobs.forEach((j) => d[Math.min(4, Math.floor(j.score / 20))]++); return d; }, [a.jobs]);
   const verified = a.jobs.filter((j) => j.deep).length;
   const n = a.jobs.length, pct = n ? Math.round((qualifying / n) * 100) : 0;
@@ -167,7 +175,7 @@ export function ReportStep({ initial, notes = [] }: { initial: Analysis; notes?:
       </div>
 
       {tab === "overview" && <Overview a={a} extra={extra} threshold={threshold} setThreshold={setThreshold} qualifying={qualifying} pct={pct} dist={dist}
-        delta={extra.length ? qualifying - baseQual : 0} verified={verified} onTab={setTab} />}
+        delta={extra.length ? qualifying - baseQual : 0} verified={verified} onTab={setTab} gated={gated} />}
       {tab === "jobs" && <>
         <div className="card deep-card">
           <div><b><IconShield /> Deep AI check</b> <small className="muted">The AI re-judges each job's requirement checklist and must quote your resume; the server checks every quote exists and is relevant. Only verified AI judgements change a requirement, then the normal scoring formula is re-applied. {verified ? `${verified} job${verified > 1 ? "s" : ""} checked.` : ""}</small></div>
@@ -201,9 +209,9 @@ export function ReportStep({ initial, notes = [] }: { initial: Analysis; notes?:
   );
 }
 
-function Overview({ a, extra, threshold, setThreshold, qualifying, pct, dist, delta, verified, onTab }: {
+function Overview({ a, extra, threshold, setThreshold, qualifying, pct, dist, delta, verified, onTab, gated }: {
   a: Analysis; extra: string[]; threshold: number; setThreshold: (n: number) => void; qualifying: number; pct: number; dist: number[];
-  delta: number; verified: number; onTab: (t: Tab) => void;
+  delta: number; verified: number; onTab: (t: Tab) => void; gated: { count: number; by: Record<string, number> };
 }) {
   const ins = a.insights, s = a.summary, n = a.jobs.length;
   const learn = ins.skills_to_learn.filter((x) => !extra.some((e) => e.toLowerCase() === x.skill.toLowerCase()));
@@ -214,7 +222,10 @@ function Overview({ a, extra, threshold, setThreshold, qualifying, pct, dist, de
         <Gauge pct={pct} label={`You qualify for ${qualifying} of ${n} jobs (${pct}%)`} />
         <div className="hero-txt">
           <div className="big" data-testid="qualify" data-value={`${qualifying}/${n}`}><CountUp value={qualifying} /> of {n} jobs {delta !== 0 && <span className={`delta ${delta > 0 ? "up" : "down"}`}>{delta > 0 ? "+" : ""}{delta} with your extra skills</span>}</div>
-          <div className="sub">you'd qualify for at <b>{threshold}%</b>+ match{verified ? ` · ${verified} AI-verified` : ""}</div>
+          <div className="sub">you'd qualify for at <b>{threshold}%</b>+ match with no failed hard requirement{verified ? ` · ${verified} AI-verified` : ""}</div>
+          {gated.count > 0 && <div className="gate-note" data-testid="gated"><b>{gated.count}</b> more score {threshold}%+ but fail a hard requirement:{" "}
+            {Object.entries(gated.by).sort((x, y) => y[1] - x[1]).map(([g, c]) => `${g} ×${c}`).join(", ")}.{" "}
+            {a.resume_id && <Link to={`/profile/${a.resume_id}?from=${encodeURIComponent(`/analysis/${a.analysis_id}?rescore=1`)}#eligibility`}>Wrong? Set your eligibility</Link>}</div>}
           <input type="range" min={30} max={90} step={5} value={threshold} onChange={(e) => setThreshold(+e.target.value)} aria-label="Qualification threshold" />
           <div className="stats">
             <div><span><b><CountUp value={s.avg_score} /></b>%</span><small>average match</small></div>
@@ -272,7 +283,7 @@ function JobsTab({ jobs, threshold, onOpen }: { jobs: ScoredJob[]; threshold: nu
   const [q, setQ] = useState("");
   const rows = useMemo(() => {
     const f = q.trim().toLowerCase();
-    const r = jobs.filter((j) => (!only || j.score >= threshold) && (!f || `${j.title} ${j.company} ${j.location}`.toLowerCase().includes(f)));
+    const r = jobs.filter((j) => (!only || qualifies(j, threshold)) && (!f || `${j.title} ${j.company} ${j.location}`.toLowerCase().includes(f)));
     r.sort(sort === "score-asc" ? (x, y) => x.score - y.score : sort === "company" ? (x, y) => x.company.localeCompare(y.company) : (x, y) => y.score - x.score);
     return r;
   }, [jobs, only, sort, q, threshold]);
@@ -293,7 +304,8 @@ function JobsTab({ jobs, threshold, onOpen }: { jobs: ScoredJob[]; threshold: nu
             <button className="r-head" onClick={() => onOpen(j)}>
               <span className={`score ${scoreTone(j.score, threshold)}`}>{j.score}%</span>
               <span className="r-main">
-                <span className="job-title">{j.title}<span className={`tag ${j.score >= threshold ? "q" : "nq"}`}>{j.score >= threshold ? "Qualified" : "Below"}</span>
+                <span className="job-title">{j.title}<span className={`tag ${qualifies(j, threshold) ? "q" : "nq"}`}>{qualifies(j, threshold) ? "Qualified" : j.score >= threshold ? "Gate" : "Below"}</span>
+                  {j.gates_failed?.map((g) => <span key={g} className="tag gate" title={j.gates?.find((x) => x.label === g)?.reason}>✕ {g}</span>)}
                   {j.deep && <span className="tag ai" title={`Rules ${j.deep.det_score}% → ${j.deep.final_score}% with ${j.deep.verified} verified AI judgement(s)`}>AI-verified</span>}
                   {j.confidence === "low" && <span className="pill">rough</span>}</span>
                 <span className="job-sub">{[j.company, j.location, j.salary].filter(Boolean).join(" · ")}</span>
@@ -320,7 +332,7 @@ function download(name: string, mime: string, body: string) {
 function exportCsv(a: Analysis, t: number) {
   const esc = (v: unknown) => { let s = String(v ?? ""); if (/^[=+\-@]/.test(s)) s = "'" + s; return `"${s.replace(/"/g, '""')}"`; };
   const rows = [["Title", "Company", "Location", "Match %", "Rules-only %", "AI verified reqs", "Qualified", "Requirements met", "Missing required skills", "Blockers", "Sources", "URL"],
-    ...a.jobs.map((j) => [j.title, j.company, j.location, j.score, j.score_det ?? j.score, j.deep ? `${j.deep.verified}/${j.deep.assessed}` : "", j.score >= t ? "yes" : "no",
+    ...a.jobs.map((j) => [j.title, j.company, j.location, j.score, j.score_det ?? j.score, j.deep ? `${j.deep.verified}/${j.deep.assessed}` : "", qualifies(j, t) ? "yes" : "no",
       `${j.requirements_met}/${j.requirements.length}`, j.required_missing.join("; "), j.blockers.join("; "), j.sources.join("; "), safeUrl(j.url)])];
   download("cv-match-report.csv", "text/csv", rows.map((r) => r.map(esc).join(",")).join("\n"));
 }
