@@ -51,3 +51,25 @@ def fast_linkedin(monkeypatch):
     """No politeness sleeps between LinkedIn pages in tests."""
     from app import linkedin
     monkeypatch.setattr(linkedin, "PAGE_DELAY", 0)
+
+
+@pytest.fixture(autouse=True)
+def isolated_state(tmp_path, monkeypatch):
+    """Fresh database, caches, rate limits and run bus for every test."""
+    from app.storage import db
+    from app.runtime import ratelimit
+    from app.runtime.events import bus
+    from app.sources import base
+    db.reset(f"sqlite:///{tmp_path}/test.db")
+    ratelimit.reset()
+    base.FEED_CACHE.clear()
+    bus.runs.clear()
+    monkeypatch.setenv("SEARCH_CACHE_TTL", "1800")
+    try:
+        from app import main
+        main.SEARCHES.clear()
+        main.ANALYSES.clear()
+    except Exception:
+        pass
+    yield
+    db.reset()

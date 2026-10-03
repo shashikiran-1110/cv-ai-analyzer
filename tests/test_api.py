@@ -136,6 +136,19 @@ async def test_paste_text_and_rescore(client, resume_pdf):
         assert no_resume.status_code == 422
 
 
+async def _run_events(c, run_id):
+    """Read a run's SSE stream to the end: [(event, data), ...]."""
+    r = await c.get(f"/api/runs/{run_id}/events")
+    out, ev = [], None
+    for line in r.text.splitlines():
+        if line.startswith("event: "):
+            ev = line[7:]
+        elif line.startswith("data: ") and ev:
+            out.append((ev, json.loads(line[6:])))
+            ev = None
+    return out
+
+
 def _mock_llm(monkeypatch, handler):
     real = httpx.AsyncClient
     monkeypatch.setattr(llm, "_client", lambda: real(transport=httpx.MockTransport(handler)))
@@ -159,7 +172,12 @@ async def test_ai_insights_via_browser_key(client, resume_pdf, monkeypatch):
     _mock_llm(monkeypatch, handler)
     async with client as c:
         body = await _analyzed(c, resume_pdf, HDR, use_ai="true")
-    ins = body["insights"]
+        assert body["insights"]["source"] == "local" and body["insights"]["pending"]   # results first, AI later
+        events = await _run_events(c, body["insights_run_id"])
+        assert [e for e, _ in events][-2:] == ["insight.ready", "run.finished"]
+        ins = dict(events)["insight.ready"]["insights"]
+        restored = (await c.get(f"/api/analysis/{body['analysis_id']}")).json()
+    assert restored["insights"]["source"] == "openai" and restored["insights_run_id"] is None
     assert ins["source"] == "openai" and ins["summary"] == "Solid fit."
     assert seen["auth"] == "Bearer sk-secret-123" and seen["body"]["model"] == "gpt-5.6-luna"
     assert ins["skills_to_learn"][0]["jobs"] == 3
@@ -173,9 +191,11 @@ async def test_ai_failure_falls_back_without_leaking_key(client, resume_pdf, mon
     _mock_llm(monkeypatch, handler)
     async with client as c:
         body = await _analyzed(c, resume_pdf, HDR, use_ai="true")
-    assert body["insights"]["source"] == "local"
-    assert "rejected the API key" in body["insights"]["ai_error"]
-    assert "sk-secret-123" not in json.dumps(body)
+        events = dict(await _run_events(c, body["insights_run_id"]))
+    ins = events["insight.ready"]["insights"]
+    assert ins["source"] == "local"
+    assert "rejected the API key" in ins["ai_error"]
+    assert "sk-secret-123" not in json.dumps(body) + json.dumps(events)
 
 
 async def test_verify_endpoint(client, monkeypatch):

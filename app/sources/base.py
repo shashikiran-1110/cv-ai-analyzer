@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Optional
 
@@ -55,9 +56,26 @@ class Source:
                 "needs": self.needs, "note": self.note, "host": self.host}
 
 
+FEED_CACHE: dict[str, tuple[float, Any]] = {}
+FEED_TTL = 900.0   # board feeds are identical for every user: fetch at most once per 15 minutes (ROADMAP §4.3)
+
+
 async def get(client: httpx.AsyncClient, url: str, params: Optional[dict] = None, *, name: str,
-              retries: int = 3, headers: Optional[dict] = None, as_json: bool = True) -> Any:
-    """GET with backoff; maps failures to SourceError with a message naming the host and the fix."""
+              retries: int = 3, headers: Optional[dict] = None, as_json: bool = True, cache: bool = False) -> Any:
+    """GET with backoff; maps failures to SourceError with a message naming the host and the fix.
+
+    cache=True: shared feed (same response for everyone) — served from FEED_CACHE for FEED_TTL seconds."""
+    key = url + "?" + "&".join(f"{k}={v}" for k, v in sorted((params or {}).items()))
+    if cache and key in FEED_CACHE and time.monotonic() - FEED_CACHE[key][0] < FEED_TTL:
+        return FEED_CACHE[key][1]
+    data = await _get_uncached(client, url, params, name=name, retries=retries, headers=headers, as_json=as_json)
+    if cache:
+        FEED_CACHE[key] = (time.monotonic(), data)
+    return data
+
+
+async def _get_uncached(client: httpx.AsyncClient, url: str, params: Optional[dict] = None, *, name: str,
+                        retries: int = 3, headers: Optional[dict] = None, as_json: bool = True) -> Any:
     host = httpx.URL(url).host
     delay = 1.0
     last = ""

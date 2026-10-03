@@ -20,6 +20,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
 
+import os  # noqa: E402
+os.environ.setdefault("DATABASE_URL", f"sqlite:///{Path(__file__).resolve().parent.parent}/data/demo.db")
 import httpx  # noqa: E402
 from fastapi import Request  # noqa: E402
 from fastapi.responses import JSONResponse, StreamingResponse  # noqa: E402

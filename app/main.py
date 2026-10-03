@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
+import os
+import secrets
 import time
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator, Literal, Optional
 
@@ -22,6 +26,9 @@ from . import sources as src
 from .sources import aggregate
 from .sources.sample import sample_jobs
 from .jobmodel import Job
+from .runtime import ratelimit
+from .runtime.events import bus
+from .storage import db
 
 log = logging.getLogger("app")
 app = FastAPI(title="CV AI Analyzer")
@@ -104,6 +111,58 @@ async def validation_handler(_: Request, exc: RequestValidationError):
     return JSONResponse({"detail": "; ".join(msgs) or "Invalid request."}, status_code=422)
 
 
+# ---------- middleware: anonymous owner id + security headers ----------
+OWNER_COOKIE = "cvm_sid"
+CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+       "connect-src 'self'; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+
+
+@app.middleware("http")
+async def owner_and_headers(request: Request, call_next):
+    sid = request.cookies.get(OWNER_COOKIE, "")
+    new = not (20 <= len(sid) <= 64 and sid.replace("-", "").replace("_", "").isalnum())
+    if new:
+        sid = secrets.token_urlsafe(24)
+    request.state.owner = sid
+    resp = await call_next(request)
+    if new:
+        resp.set_cookie(OWNER_COOKIE, sid, max_age=int(db.retention_seconds()), httponly=True, samesite="lax",
+                        secure=os.getenv("COOKIE_SECURE", "false").lower() == "true")
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    resp.headers.setdefault("Permissions-Policy", "camera=(), microphone=(self), geolocation=()")
+    if not request.url.path.startswith("/api/"):
+        resp.headers.setdefault("Content-Security-Policy", CSP)
+    if os.getenv("HSTS", "false").lower() == "true":
+        resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    return resp
+
+
+def owner(request: Request) -> str:
+    return getattr(request.state, "owner", "")
+
+
+async def _purge_loop() -> None:
+    while True:
+        try:
+            await run_in_threadpool(db.purge_expired)
+        except Exception:
+            log.exception("purge failed")
+        await asyncio.sleep(3600)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    db.engine()
+    t = asyncio.create_task(_purge_loop())
+    _TASKS.add(t)
+    yield
+    t.cancel()
+
+
+app.router.lifespan_context = lifespan
+
+
 # ---------- housekeeping ----------
 def _gc(store: dict, limit: int) -> None:
     now = time.time()
@@ -116,8 +175,28 @@ def _gc(store: dict, limit: int) -> None:
 def _analysis(aid: str) -> dict:
     a = ANALYSES.get(aid)
     if not a:
-        raise HTTPException(404, "This analysis expired. Please upload your resume again.")
+        a = db.load_analysis(aid) if len(aid) == 32 and aid.isalnum() else None   # survives refresh/restart
+        if a:
+            ANALYSES[aid] = a
+    if not a:
+        raise HTTPException(404, "This analysis expired or doesn't exist. Please run a new analysis.")
     return a
+
+
+def _search(sid: str) -> Optional[dict]:
+    s = SEARCHES.get(sid)
+    if not s and len(sid) == 32 and sid.isalnum():
+        s = db.load_search(sid)
+        if s:
+            SEARCHES[sid] = s
+    return s
+
+
+def _persist_analysis(aid: str, a: dict) -> None:
+    try:
+        db.save_analysis(aid, a)
+    except Exception:
+        log.exception("could not persist analysis")
 
 
 def _job(a: dict, job_id: str) -> dict:
@@ -161,12 +240,35 @@ async def list_sources():
     return [x.public() for x in src.ALL]
 
 
-def _new_search(query: dict, status: str = "running") -> str:
+def _new_search(query: dict, status: str = "running", owner_id: str = "", cache_key: Optional[str] = None) -> str:
     _gc(SEARCHES, config.MAX_STORED_SEARCHES)
     sid = uuid.uuid4().hex
     SEARCHES[sid] = {"status": status, "stage": "fetching", "done": 0, "total": query.get("count", 0), "jobs": [],
-                     "error": None, "warnings": [], "sources": [], "created": time.time(), "query": query}
+                     "error": None, "warnings": [], "sources": [], "created": time.time(), "query": query,
+                     "owner": owner_id, "cache_key": cache_key}
+    bus.create(sid, "search")
     return sid
+
+
+async def _persist_search(sid: str, final: Optional[str] = None) -> None:
+    """Write the finished search, *then* flip it to its final status and announce it, so anything that sees
+    "done" (pollers, SSE, a refresh, the repeat-search cache) can also load it from the database."""
+    s = SEARCHES[sid]
+    final = final or s["status"]
+    try:
+        await run_in_threadpool(db.save_search, sid, {**s, "status": final}, s.get("owner", ""))
+    except Exception:
+        log.exception("could not persist search")
+    s["status"] = final
+    await bus.publish(sid, "jobs.ready", {"count": len(s.get("jobs") or []), "status": final})
+    await bus.finish(sid, final, error=s.get("error"))
+
+
+def _search_cache_key(req: "SearchRequest", hours: Optional[int]) -> str:
+    q = req.model_dump(exclude={"adzuna", "custom_hours", "time_range"})
+    q["hours"] = hours
+    q["adzuna_app"] = (req.adzuna or {}).get("app_id", "") if "adzuna" in req.sources else ""
+    return hashlib.sha256(json.dumps(q, sort_keys=True).encode()).hexdigest()
 
 
 async def _run_search(sid: str, req: SearchRequest, hours: Optional[int]) -> None:
@@ -182,6 +284,8 @@ async def _run_search(sid: str, req: SearchRequest, hours: Optional[int]) -> Non
         finished = sum(1 for st in stats.values() if st["status"] != "running")
         li = (stats.get("linkedin") or {}).get("progress")
         state.update(done=finished, total=len(stats), stage="fetching", linkedin=li)
+        await bus.publish(sid, "source.progress", {"sources": state["sources"], "linkedin": li,
+                                                   "done": finished, "total": len(stats)})
 
     try:
         jobs, stats, warnings = await aggregate.run(q, chosen, on_update)
@@ -190,19 +294,22 @@ async def _run_search(sid: str, req: SearchRequest, hours: Optional[int]) -> Non
         if not jobs:
             errs = [st["message"] for st in stats.values() if st["status"] == "error" and st["message"]]
             if errs and all(st["status"] == "error" for st in stats.values()):
-                state.update(status="error", error="No source could be reached. " + " | ".join(errs))
+                state["error"] = "No source could be reached. " + " | ".join(errs)
+                await _persist_search(sid, "error")
                 return
             state["jobs"] = []
         else:
             state["jobs"] = [j.to_dict() for j in jobs]
-        state["status"] = "done"
+        final = "done"
     except Exception:
         log.exception("search failed")
-        state.update(status="error", error="Unexpected error while fetching jobs. Please try again.")
+        state["error"] = "Unexpected error while fetching jobs. Please try again."
+        final = "error"
+    await _persist_search(sid, final)
 
 
 @app.post("/api/search")
-async def start_search(req: SearchRequest):
+async def start_search(req: SearchRequest, request: Request):
     if req.time_range == "custom":
         if not req.custom_hours:
             raise HTTPException(422, "Enter the number of hours for a custom time range.")
@@ -220,11 +327,22 @@ async def start_search(req: SearchRequest):
     if "adzuna" in req.sources and not (req.adzuna and req.adzuna.get("app_id") and req.adzuna.get("app_key")):
         raise HTTPException(422, "Adzuna needs an App ID and App Key (free at developer.adzuna.com), or untick it.")
     query = {**req.model_dump(exclude={"adzuna"}), "title": req.title.strip(), "location": req.location.strip(), "hours": hours}
-    sid = _new_search(query)
+    key = _search_cache_key(req, hours)
+    cached = await run_in_threadpool(db.find_cached_search, key, float(os.getenv("SEARCH_CACHE_TTL", "1800")))
+    if cached:                         # same search recently: reuse its jobs instantly (ROADMAP Phase 2)
+        prev = _search(cached)
+        if prev and prev["status"] == "done" and prev["jobs"]:
+            sid = _new_search(query, status="done", owner_id=owner(request), cache_key=key)
+            SEARCHES[sid].update(jobs=prev["jobs"], warnings=prev.get("warnings", []), sources=prev.get("sources", []),
+                                 cached_from=cached)
+            await _persist_search(sid)
+            return {"search_id": sid, "cached": True}
+    ratelimit.check(request, "search")
+    sid = _new_search(query, owner_id=owner(request), cache_key=key)
     task = asyncio.create_task(_run_search(sid, req, hours))
     _TASKS.add(task)
     task.add_done_callback(_TASKS.discard)
-    return {"search_id": sid}
+    return {"search_id": sid, "cached": False}
 
 
 def _finish_static(title: str, jobs: list[Job], kind: str, warnings: list[str] | None = None) -> str:
@@ -235,6 +353,8 @@ def _finish_static(title: str, jobs: list[Job], kind: str, warnings: list[str] |
                          sources=[{"id": kind, "name": "Pasted jobs" if kind == "manual" else "Sample jobs",
                                    "status": "done", "fetched": len(jobs), "kept": len(jobs), "selected": len(jobs),
                                    "message": ""}])
+    db.save_search(sid, SEARCHES[sid])
+    bus.runs.pop(sid, None)
     return sid
 
 
@@ -262,10 +382,11 @@ async def sample_search(body: SampleSearch):
 
 @app.get("/api/search/{sid}")
 async def get_search(sid: str):
-    s = SEARCHES.get(sid)
+    s = _search(sid)
     if not s:
         raise HTTPException(404, "Search expired or not found. Please search again.")
     out = {k: s.get(k) for k in ("status", "stage", "done", "total", "error", "query", "warnings", "sources", "linkedin")}
+    out["cached"] = bool(s.get("cached_from"))
     if s["status"] == "done":
         out["jobs"] = [{k: v for k, v in j.items() if k != "description"} | {"description_chars": len(j["description"])}
                        for j in s["jobs"]]
@@ -308,8 +429,9 @@ async def diagnose(request: Request):
 
 
 @app.post("/api/resume/preview")
-async def resume_preview(resume_file: Optional[UploadFile] = File(None, alias="resume"),
+async def resume_preview(request: Request, resume_file: Optional[UploadFile] = File(None, alias="resume"),
                          resume_text: Optional[str] = Form(None)):
+    ratelimit.check(request, "upload")
     if resume_file is not None and resume_file.filename:
         data = await resume_file.read(config.MAX_PDF_BYTES + 1)
         try:
@@ -322,7 +444,9 @@ async def resume_preview(resume_file: Optional[UploadFile] = File(None, alias="r
         raise HTTPException(422, "Upload a PDF or paste at least 100 characters of resume text.")
     found = sorted(skills.extract_skills(text))
     exp = resume.experience(text)
-    return {"chars": len(text), "words": len(text.split()), "years": exp["years"], "experience": exp,
+    rid = hashlib.sha256((owner(request) + text).encode()).hexdigest()[:32]
+    await run_in_threadpool(db.save_resume, rid, text, hashlib.sha256(text.encode()).hexdigest(), owner(request))
+    return {"resume_id": rid, "chars": len(text), "words": len(text.split()), "years": exp["years"], "experience": exp,
             "skills": found, "education": matcher.education_level(text), "headline": text.strip().splitlines()[0][:120]}
 
 
@@ -360,12 +484,13 @@ async def analyze(
     search_id: str = Form(...),
     resume_file: Optional[UploadFile] = File(None, alias="resume"),
     resume_text: Optional[str] = Form(None),
+    resume_id: Optional[str] = Form(None),
     threshold: int = Form(config.DEFAULT_THRESHOLD),
     use_ai: bool = Form(False),
     job_ids: Optional[str] = Form(None),
     extra_skills: Optional[str] = Form(None),
 ):
-    s = SEARCHES.get(search_id)
+    s = _search(search_id)
     if not s or s["status"] != "done":
         raise HTTPException(404, "Search expired or not finished. Please search again.")
     jobs = s["jobs"]
@@ -385,31 +510,117 @@ async def analyze(
         raise HTTPException(422, "extra_skills must be a JSON list.")
     extra, unknown = _parse_extra([str(x) for x in extra_raw])
 
+    text = await _resume_text_from(resume_file, resume_text, resume_id)
+    rid = hashlib.sha256((owner(request) + text).encode()).hexdigest()[:32]
+    await run_in_threadpool(db.save_resume, rid, text, hashlib.sha256(text.encode()).hexdigest(), owner(request))
+
+    aid = uuid.uuid4().hex
+    a = {"created": time.time(), "resume_text": text, "years": resume.estimate_years(text), "resume_id": rid,
+         "jobs_full": jobs, "query": s["query"], "extra": extra, "search_id": search_id, "owner": owner(request)}
+    computed = await run_in_threadpool(_compute, a, extra, threshold)
+    ins = insights.local_insights(computed["summary"], computed["jobs"], s["query"])
+    cfg = llm.resolve(request.headers) if use_ai else None
+    run_id = None
+    if use_ai and cfg is None:
+        ins["ai_error"] = "No AI key set, showing built-in analysis."
+    elif cfg is not None:
+        ratelimit.check(request, "ai")
+        run_id = f"ins{aid}"
+        ins["pending"] = True
+    a["result"] = {"query": s["query"], **computed, "insights": ins, "insights_run_id": run_id}
+    _gc(ANALYSES, config.MAX_STORED_SEARCHES)
+    ANALYSES[aid] = a
+    await run_in_threadpool(_persist_analysis, aid, a)
+    response = {"analysis_id": aid, "resume_id": rid, "extra_skills": extra, "unknown_skills": unknown,
+                **a["result"], "insights": dict(ins)}
+    if run_id:                       # start only after the response is fixed, so it is deterministic
+        bus.create(run_id, "insights")
+        task = asyncio.create_task(_insights_run(run_id, aid, cfg))
+        _TASKS.add(task)
+        task.add_done_callback(_TASKS.discard)
+    return response
+
+
+async def _resume_text_from(resume_file, resume_text, resume_id) -> str:
     if resume_file is not None and resume_file.filename:
         data = await resume_file.read(config.MAX_PDF_BYTES + 1)
         try:
-            text = await run_in_threadpool(resume.extract_text, data)
+            return await run_in_threadpool(resume.extract_text, data)
         except resume.ResumeError as e:
             raise HTTPException(422, str(e))
-    elif resume_text and resume_text.strip():
+    if resume_text and resume_text.strip():
         text = resume_text.strip()[:40000]
         if len(text) < 100:
             raise HTTPException(422, "Pasted resume is too short to analyze (need at least 100 characters).")
-    else:
-        raise HTTPException(422, "Upload a PDF or paste your resume text.")
+        return text
+    if resume_id:
+        r = await run_in_threadpool(db.load_resume, resume_id)
+        if r:
+            return r["text"]
+        raise HTTPException(404, "That saved resume expired. Upload it again.")
+    raise HTTPException(422, "Upload a PDF or paste your resume text.")
 
-    aid = uuid.uuid4().hex
-    a = {"created": time.time(), "resume_text": text, "years": resume.estimate_years(text),
-         "jobs_full": jobs, "query": s["query"], "extra": extra}
-    computed = await run_in_threadpool(_compute, a, extra, threshold)
-    cfg = llm.resolve(request.headers) if use_ai else None
-    ins = await insights.build_insights(text, computed["summary"], computed["jobs"], s["query"], cfg)
-    if use_ai and cfg is None:
-        ins["ai_error"] = "No AI key set, showing built-in analysis."
-    a["result"] = {"query": s["query"], **computed, "insights": ins}
-    _gc(ANALYSES, config.MAX_STORED_SEARCHES)
-    ANALYSES[aid] = a
-    return {"analysis_id": aid, "extra_skills": extra, "unknown_skills": unknown, **a["result"]}
+
+async def _insights_run(run_id: str, aid: str, cfg: llm.LLMConfig) -> None:
+    """AI advice off the request path (ROADMAP §3.5): results first, narrative streams in after."""
+    a = ANALYSES.get(aid)
+    if not a:
+        return
+    await bus.publish(run_id, "insight.started", {})
+    try:
+        res = a["result"]
+        ins = await insights.build_insights(a["resume_text"], res["summary"], res["jobs"], a["query"], cfg)
+        res["insights"] = ins
+        res["insights_run_id"] = None
+        await run_in_threadpool(_persist_analysis, aid, a)
+        await bus.publish(run_id, "insight.ready", {"insights": ins})
+        await bus.finish(run_id, "done")
+    except Exception as e:
+        log.exception("insights run failed")
+        a["result"]["insights"].pop("pending", None)
+        a["result"]["insights"]["ai_error"] = f"AI advice failed: {type(e).__name__}"
+        await bus.finish(run_id, "error", error=str(e)[:200])
+
+
+@app.get("/api/analysis/{aid}")
+async def get_analysis(aid: str):
+    a = _analysis(aid)
+    return {"analysis_id": aid, "resume_id": a.get("resume_id"), "search_id": a.get("search_id"),
+            "extra_skills": a.get("extra", []), "unknown_skills": [], **a["result"]}
+
+
+@app.get("/api/runs/{run_id}/events")
+async def run_events(run_id: str, request: Request):
+    run = bus.get(run_id)
+    if not run:
+        raise HTTPException(404, "Unknown or expired run.")
+    try:
+        after = int(request.headers.get("last-event-id") or request.query_params.get("after") or 0)
+    except ValueError:
+        after = 0
+
+    async def gen() -> AsyncIterator[str]:
+        async for e in bus.subscribe(run_id, after):
+            if e["type"] == "ping":
+                yield ": ping\n\n"
+                continue
+            yield f"id: {e['seq']}\nevent: {e['type']}\ndata: {json.dumps(e['data'])}\n\n"
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.get("/api/me/export")
+async def export_me(request: Request):
+    return await run_in_threadpool(db.export_owner, owner(request))
+
+
+@app.delete("/api/me")
+async def delete_me(request: Request):
+    me = owner(request)
+    for store in (ANALYSES, SEARCHES):
+        for k in [k for k, v in store.items() if v.get("owner") == me]:
+            store.pop(k, None)
+    return {"deleted": await run_in_threadpool(db.delete_owner, me)}
 
 
 @app.post("/api/analysis/{aid}/rescore")
@@ -419,6 +630,7 @@ async def rescore(aid: str, body: RescoreRequest):
     a["extra"] = extra
     computed = await run_in_threadpool(_compute, a, extra, body.threshold)
     a["result"].update(computed)
+    await run_in_threadpool(_persist_analysis, aid, a)
     local = insights.local_insights(computed["summary"], computed["jobs"], a["query"])
     return {"extra_skills": extra, "unknown_skills": unknown, **computed, "insights": local}
 
@@ -459,6 +671,7 @@ def _full_ctx(a: dict) -> dict:
 async def chat(aid: str, body: ChatRequest, request: Request):
     a = _analysis(aid)
     cfg = llm.require(request.headers)
+    ratelimit.check(request, "ai")
     if body.messages[-1].role != "user":
         raise HTTPException(422, "The last message must be from the user.")
     msgs = [m.model_dump() for m in body.messages][-12:]
@@ -472,6 +685,7 @@ async def chat(aid: str, body: ChatRequest, request: Request):
 async def tool(aid: str, body: ToolRequest, request: Request):
     a = _analysis(aid)
     cfg = llm.require(request.headers)
+    ratelimit.check(request, "ai")
     job = _job(a, body.job_id)
     prompt = assistant.TOOLS[body.kind]
     return await _stream_response(cfg, assistant.system_for(_full_ctx(a), job, a["extra"]),
@@ -482,6 +696,7 @@ async def tool(aid: str, body: ToolRequest, request: Request):
 async def deep_check(aid: str, job_id: str, request: Request):
     a = _analysis(aid)
     cfg = llm.require(request.headers)
+    ratelimit.check(request, "ai")
     job = _job(a, job_id)
     a.setdefault("deep", {})
     if len(a["deep"]) >= 60 and job_id not in a["deep"]:
@@ -493,6 +708,7 @@ async def deep_check(aid: str, job_id: str, request: Request):
     a["deep"][job_id] = await deepmatch.assess(cfg, job, base, a["resume_text"])
     computed = await run_in_threadpool(_compute, a, a["extra"], a["result"]["summary"]["threshold"])
     a["result"].update(computed)
+    await run_in_threadpool(_persist_analysis, aid, a)
     out = next(r["deep"] for r in computed["jobs"] if r["id"] == job_id)
     return {"deep": out, "summary": computed["summary"], "jobs": computed["jobs"]}
 

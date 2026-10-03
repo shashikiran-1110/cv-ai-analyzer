@@ -29,7 +29,7 @@ async def remotive(q: JobQuery, client: httpx.AsyncClient) -> list[Job]:
 
 
 async def remoteok(q: JobQuery, client: httpx.AsyncClient) -> list[Job]:
-    data = await get(client, "https://remoteok.com/api", name="RemoteOK")
+    data = await get(client, "https://remoteok.com/api", name="RemoteOK", cache=True)
     out = []
     for j in data if isinstance(data, list) else []:
         if not isinstance(j, dict) or not j.get("id") or not j.get("position"):
@@ -46,7 +46,7 @@ async def remoteok(q: JobQuery, client: httpx.AsyncClient) -> list[Job]:
 async def arbeitnow(q: JobQuery, client: httpx.AsyncClient) -> list[Job]:
     out = []
     for page in (1, 2, 3):
-        data = await get(client, "https://www.arbeitnow.com/api/job-board-api", {"page": page}, name="Arbeitnow")
+        data = await get(client, "https://www.arbeitnow.com/api/job-board-api", {"page": page}, name="Arbeitnow", cache=True)
         rows = data.get("data", []) or []
         for j in rows:
             out.append(Job(
@@ -82,7 +82,7 @@ async def himalayas(q: JobQuery, client: httpx.AsyncClient) -> list[Job]:
     except SourceError as e:
         if "404" not in str(e):
             raise
-        data = await get(client, "https://himalayas.app/jobs/api", {"limit": 100}, name="Himalayas")
+        data = await get(client, "https://himalayas.app/jobs/api", {"limit": 100}, name="Himalayas", cache=True)
     out = []
     for j in data.get("jobs", []) or []:
         locs = j.get("locationRestrictions") or []
@@ -101,7 +101,8 @@ async def himalayas(q: JobQuery, client: httpx.AsyncClient) -> list[Job]:
 
 async def themuse(q: JobQuery, client: httpx.AsyncClient) -> list[Job]:
     async def page(p: int):
-        return await get(client, "https://www.themuse.com/api/public/jobs", {"page": p, "descending": "true"}, name="The Muse")
+        return await get(client, "https://www.themuse.com/api/public/jobs", {"page": p, "descending": "true"}, name="The Muse",
+                         cache=True)
 
     pages = await asyncio.gather(*(page(p) for p in range(5)), return_exceptions=True)
     if all(isinstance(x, Exception) for x in pages):

@@ -4,11 +4,14 @@ import type { ResumePreview } from "../types";
 import { SkillPicker } from "./SkillPicker";
 import { Alert } from "./ui";
 
-export interface ResumeState { mode: "pdf" | "paste"; file: File | null; text: string; extra: string[]; preview: ResumePreview | null }
+export interface ResumeState {
+  mode: "pdf" | "paste"; file: File | null; fileName?: string; text: string; extra: string[];
+  preview: ResumePreview | null; resumeId?: string;
+}
 export const EMPTY_RESUME: ResumeState = { mode: "pdf", file: null, text: "", extra: [], preview: null };
 const MAX = 10 * 1024 * 1024;
 
-export function resumeReady(r: ResumeState) { return !!r.preview && (r.mode === "pdf" ? !!r.file : r.text.trim().length >= 100); }
+export function resumeReady(r: ResumeState) { return !!r.preview && !!r.resumeId; }
 
 export function ResumeCard({ value, onChange }: { value: ResumeState; onChange: (r: ResumeState) => void }) {
   const [over, setOver] = useState(false);
@@ -27,7 +30,7 @@ export function ResumeCard({ value, onChange }: { value: ResumeState; onChange: 
     setBusy(true); setErr("");
     try {
       const p = await api<ResumePreview>("/api/resume/preview", { method: "POST", body: fd });
-      if (id === seq.current) onChange({ ...latest.current, preview: p });
+      if (id === seq.current) onChange({ ...latest.current, preview: p, resumeId: p.resume_id });
     } catch (e) {
       if (id === seq.current) { setErr((e as Error).message); onChange({ ...latest.current, preview: null }); }
     } finally { if (id === seq.current) setBusy(false); }
@@ -39,14 +42,15 @@ export function ResumeCard({ value, onChange }: { value: ResumeState; onChange: 
     if (!(f.type === "application/pdf" || /\.pdf$/i.test(f.name))) return setErr("Please choose a PDF file.");
     if (f.size === 0) return setErr("That file is empty.");
     if (f.size > MAX) return setErr("That PDF is larger than 10 MB.");
-    const next = { ...value, mode: "pdf" as const, file: f, preview: null };
+    const next = { ...value, mode: "pdf" as const, file: f, fileName: f.name, preview: null, resumeId: undefined };
     onChange(next); void preview(next);
   }
 
   // debounce previews of pasted text
   useEffect(() => {
     if (value.mode !== "paste") return;
-    if (value.text.trim().length < 100) { if (value.preview) onChange({ ...value, preview: null }); return; }
+    if (value.text.trim().length < 100) { if (value.preview) onChange({ ...value, preview: null, resumeId: undefined }); return; }
+    if (value.preview && value.resumeId) return;   // already read (e.g. restored after reload)
     const t = setTimeout(() => void preview(value), 700);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -59,24 +63,26 @@ export function ResumeCard({ value, onChange }: { value: ResumeState; onChange: 
       <div className="seg narrow" role="tablist" aria-label="Resume input">
         {(["pdf", "paste"] as const).map((m) => (
           <button key={m} role="tab" type="button" aria-selected={value.mode === m} aria-checked={value.mode === m}
-            onClick={() => { setErr(""); const next = { ...value, mode: m, preview: null }; onChange(next); if (m === "pdf" && value.file) void preview(next); }}>
+            onClick={() => { setErr(""); const next = { ...value, mode: m, preview: null, resumeId: undefined }; onChange(next); if (m === "pdf" && value.file) void preview(next); }}>
             {m === "pdf" ? "Upload PDF" : "Paste text"}
           </button>
         ))}
       </div>
       {value.mode === "pdf" ? (
-        <label className={`drop ${over ? "over" : ""} ${value.file ? "has" : ""}`} tabIndex={0} data-testid="dropzone"
+        <label className={`drop ${over ? "over" : ""} ${value.file || value.resumeId ? "has" : ""}`} tabIndex={0} data-testid="dropzone"
           onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); input.current?.click(); } }}
           onDragOver={(e) => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)}
           onDrop={(e) => { e.preventDefault(); setOver(false); pick(e.dataTransfer.files[0]); }}>
           <input ref={input} type="file" accept="application/pdf,.pdf" hidden onChange={(e) => { pick(e.target.files?.[0]); e.target.value = ""; }} />
           <div className="drop-icon" aria-hidden="true">⇪</div>
-          <div>{value.file ? <><b>{value.file.name}</b> · {(value.file.size / 1024).toFixed(0)} KB · click to replace</> : <><b>Drop your CV / resume PDF here</b> or click to browse</>}</div>
+          <div>{value.file ? <><b>{value.file.name}</b> · {(value.file.size / 1024).toFixed(0)} KB · click to replace</>
+            : value.fileName && value.resumeId ? <><b>{value.fileName}</b> · saved · click to replace</>
+            : <><b>Drop your CV / resume PDF here</b> or click to browse</>}</div>
           <small>Text-based PDF up to 10 MB (scanned images can't be read; paste text instead)</small>
         </label>
       ) : (
         <label className="field"><span>Resume text</span>
-          <textarea rows={9} value={value.text} onChange={(e) => onChange({ ...value, text: e.target.value })} placeholder="Paste your resume here…" maxLength={40000} />
+          <textarea rows={9} value={value.text} onChange={(e) => onChange({ ...value, text: e.target.value, preview: null, resumeId: undefined })} placeholder="Paste your resume here…" maxLength={40000} />
           <small>{value.text.trim().length} characters{value.text.trim().length < 100 ? " (need at least 100)" : ""}</small>
         </label>
       )}

@@ -1,5 +1,10 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { post } from "../api";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { api, post } from "../api";
+import { CountUp } from "../hooks/useCountUp";
+import { useRunEvents } from "../hooks/useRunEvents";
+import { useToast } from "./Toast";
 import { useAi } from "../ai";
 import type { Analysis, DeepResult, ScoredJob } from "../types";
 import { AssistantTab } from "./AssistantTab";
@@ -15,15 +20,36 @@ const TABS: [Tab, string][] = [["overview", "Overview"], ["jobs", "Jobs"], ["ski
 const BUCKETS = ["0–19", "20–39", "40–59", "60–79", "80+"];
 type Partial_ = Pick<Analysis, "summary" | "jobs">;
 
-export function ReportStep({ initial, initialThreshold, notes = [], onRestart }: { initial: Analysis; initialThreshold: number; notes?: string[]; onRestart: () => void }) {
+export function ReportStep({ initial, notes = [] }: { initial: Analysis; notes?: string[] }) {
   const ai = useAi();
-  const [a, setA] = useState<Analysis>(initial);
-  const [tab, setTab] = useState<Tab>("overview");
-  const [threshold, setThreshold] = useState(initialThreshold);
+  const qc = useQueryClient();
+  const toast = useToast();
+  const navigate = useNavigate();
+  const onRestart = () => navigate("/");
+  const [params, setParams] = useSearchParams();
+  const [a, setAState] = useState<Analysis>(initial);
+  // URL holds the view state so refresh, back/forward and shared links restore it (ROADMAP §9.1)
+  const tab = (["overview", "jobs", "skills", "assistant"].includes(params.get("tab") || "") ? params.get("tab") : "overview") as Tab;
+  const threshold = Math.max(30, Math.min(90, Number(params.get("t")) || initial.summary.threshold || 60));
+  const open = params.get("job");
+  const setParam = (k: string, v: string | null) => setParams((p) => { const n = new URLSearchParams(p); if (v === null) n.delete(k); else n.set(k, v); return n; }, { replace: k === "t" });
+  const setTab = (t: Tab) => setParam("tab", t === "overview" ? null : t);
+  const setThreshold = (t: number) => setParam("t", String(t));
+  const setOpen = (id: string | null) => setParam("job", id);
+  const setA = (u: Analysis | ((p: Analysis) => Analysis)) => setAState((prev) => {
+    const next = typeof u === "function" ? (u as (p: Analysis) => Analysis)(prev) : u;
+    qc.setQueryData(["analysis", next.analysis_id], next);
+    return next;
+  });
+
+  // AI advice arrives after the deterministic results (ROADMAP §3.5)
+  useRunEvents(a.insights.pending ? a.insights_run_id : null, (e) => {
+    if (e.type === "insight.ready") { setA((p) => ({ ...p, insights: e.data.insights, insights_run_id: null })); toast("AI advice is ready.", "ok"); }
+    if (e.type === "run.finished" && e.data.status === "error") setA((p) => ({ ...p, insights: { ...p.insights, pending: false, ai_error: "AI advice failed." } }));
+  }, () => { void api<Analysis>(`/api/analysis/${a.analysis_id}`).then((x) => setA({ ...x, insights: { ...x.insights, pending: false } })); });
   const [extra, setExtraState] = useState<string[]>(initial.extra_skills);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const [open, setOpen] = useState<string | null>(null);
   const [deep, setDeep] = useState<{ running: boolean; done: number; total: number; errors: string[] }>({ running: false, done: 0, total: 0, errors: [] });
   const stopDeep = useRef(false);
   const baseline = useRef(new Map(initial.jobs.map((j) => [j.id, j.score])));
@@ -143,12 +169,12 @@ function Overview({ a, extra, threshold, setThreshold, qualifying, pct, dist, de
       <div className="hero card">
         <Gauge pct={pct} label={`You qualify for ${qualifying} of ${n} jobs (${pct}%)`} />
         <div className="hero-txt">
-          <div className="big" data-testid="qualify">{qualifying} of {n} jobs {delta !== 0 && <span className={`delta ${delta > 0 ? "up" : "down"}`}>{delta > 0 ? "+" : ""}{delta} with your extra skills</span>}</div>
+          <div className="big" data-testid="qualify" data-value={`${qualifying}/${n}`}><CountUp value={qualifying} /> of {n} jobs {delta !== 0 && <span className={`delta ${delta > 0 ? "up" : "down"}`}>{delta > 0 ? "+" : ""}{delta} with your extra skills</span>}</div>
           <div className="sub">you'd qualify for at <b>{threshold}%</b>+ match{verified ? ` · ${verified} AI-verified` : ""}</div>
           <input type="range" min={30} max={90} step={5} value={threshold} onChange={(e) => setThreshold(+e.target.value)} aria-label="Qualification threshold" />
           <div className="stats">
-            <div><span><b>{s.avg_score}</b>%</span><small>average match</small></div>
-            <div><span><b>{a.jobs[0]?.score ?? 0}</b>%</span><small>best match</small></div>
+            <div><span><b><CountUp value={s.avg_score} /></b>%</span><small>average match</small></div>
+            <div><span><b><CountUp value={a.jobs[0]?.score ?? 0} /></b>%</span><small>best match</small></div>
             <div><span><b>{s.resume_years ? s.resume_years.toFixed(1) : "?"}</b></span><small>yrs experience</small></div>
             <div><span><b>{s.resume_skills.length}</b></span><small>skills detected</small></div>
           </div>
@@ -158,6 +184,7 @@ function Overview({ a, extra, threshold, setThreshold, qualifying, pct, dist, de
         </div>
       </div>
 
+      {(ins as { pending?: boolean }).pending && <div className="card summary shimmer" aria-live="polite"><b>AI advice is being written…</b> <small className="muted">Your scores are final; personalised advice will appear here in a moment.</small></div>}
       {ins.ai_error && <Alert kind="warn">{ins.ai_error}</Alert>}
       {ins.summary && <div className="card summary"><b>Overall: </b>{ins.summary}{ins.source !== "local" && <div className="fine">Advice written by {ins.source === "openai" ? "OpenAI" : "Anthropic"} from your resume and the posting analysis.</div>}</div>}
 

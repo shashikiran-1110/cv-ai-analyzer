@@ -20,7 +20,7 @@ export interface JobSummary {
 }
 export interface SearchStatus {
   status: "running" | "done" | "error"; stage: string; done: number; total: number;
-  error: string | null; query: SearchQuery; jobs?: JobSummary[]; warnings?: string[]; sources?: SourceStat[];
+  error: string | null; query: SearchQuery; jobs?: JobSummary[]; warnings?: string[]; sources?: SourceStat[]; cached?: boolean;
   linkedin?: { stage: string; done: number; total: number } | null;
 }
 export interface ReqCheck { id: string; text: string; preferred: boolean; coverage: number; missing: string[]; status: "met" | "partial" | "missing" }
@@ -58,7 +58,8 @@ export interface Insights {
 }
 export interface Analysis {
   analysis_id: string; extra_skills: string[]; unknown_skills: string[]; query: SearchQuery;
-  summary: Summary; jobs: ScoredJob[]; insights: Insights;
+  summary: Summary; jobs: ScoredJob[]; insights: Insights & { pending?: boolean };
+  insights_run_id?: string | null; resume_id?: string; search_id?: string;
 }
 export interface JobDetail { id: string; title: string; company: string; location: string; url: string; description: string }
 export interface AppConfig { max_jobs: number; default_threshold: number; server_ai: Provider | null; default_models: Record<Provider, string> }
@@ -67,7 +68,7 @@ export interface SkillInfo { name: string; category: string }
 export interface ChatMsg { role: "user" | "assistant"; content: string }
 export interface ExperienceSpan { start: string; end: string; months: number; line: string }
 export interface ResumePreview {
-  chars: number; words: number; years: number; skills: string[]; education: string | null; headline: string;
+  resume_id: string; chars: number; words: number; years: number; skills: string[]; education: string | null; headline: string;
   experience: { months: number; years: number; precision: string; method: string; explicit_years: number; spans: ExperienceSpan[] };
 }
 export interface CheckResult { name: string; ok: boolean; message: string; kind?: string }

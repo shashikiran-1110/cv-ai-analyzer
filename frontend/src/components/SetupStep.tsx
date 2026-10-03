@@ -1,19 +1,16 @@
 import { useEffect, useState } from "react";
-import { api, post } from "../api";
+import { useNavigate } from "react-router-dom";
+import { post } from "../api";
 import { useAi } from "../ai";
-import type { SearchParams, SearchStatus, SourceStat } from "../types";
-import { ResumeCard, resumeReady, type ResumeState } from "./ResumeCard";
-import { SearchProgress } from "./SearchProgress";
-import { parsePasted, sourcesPayload, sourcesProblem, SourcesPicker, type SourceConfig } from "./SourcesPicker";
-import { Alert } from "./ui";
+import type { SearchParams } from "../types";
+import { useSetup } from "../state/setup";
+import { ResumeCard, resumeReady } from "./ResumeCard";
+import { parsePasted, sourcesPayload, sourcesProblem, SourcesPicker } from "./SourcesPicker";
 
 const TIME = [["24h", "24 hours"], ["week", "Week"], ["month", "Month"], ["any", "Any"], ["custom", "Custom"]] as const;
 const EXPERIENCE = [["internship", "Internship"], ["entry", "Entry"], ["associate", "Associate"], ["mid_senior", "Mid-Senior"], ["director", "Director"], ["executive", "Executive"]];
 const TYPES = [["full_time", "Full-time"], ["part_time", "Part-time"], ["contract", "Contract"], ["temporary", "Temporary"], ["internship", "Internship"]];
 const WORKPLACE = [["on_site", "On-site"], ["hybrid", "Hybrid"], ["remote", "Remote"]];
-
-export interface Options { threshold: number; wantAi: boolean; review: boolean; hours: number }
-export const DEFAULT_PARAMS: SearchParams = { title: "", location: "", count: 40, time_range: "week", experience: [], job_types: [], workplace: [], sort: "recent", strict: true };
 
 function MultiChips({ label, options, value, onChange }: { label: string; options: string[][]; value: string[]; onChange: (v: string[]) => void }) {
   return (
@@ -29,26 +26,16 @@ function MultiChips({ label, options, value, onChange }: { label: string; option
   );
 }
 
-export function SetupStep(props: {
-  resume: ResumeState; setResume: (r: ResumeState) => void;
-  params: SearchParams; setParams: (p: SearchParams) => void;
-  sources: SourceConfig; setSources: (s: SourceConfig) => void;
-  opts: Options; setOpts: (o: Options) => void;
-  onReview: (searchId: string, s: SearchStatus) => void;
-  analyze: (searchId: string, jobIds: string[], onStage: (s: string) => void, notes?: string[]) => Promise<void>;
-  openDiagnose: () => void;
-}) {
+export function SetupStep({ openDiagnose }: { openDiagnose: () => void }) {
   const ai = useAi();
-  const { resume, params: p, sources, opts } = props;
+  const navigate = useNavigate();
+  const { resume, setResume, params: p, setParams, sources, setSources, opts, setOpts } = useSetup();
+  const props = { setResume, setSources, setOpts, openDiagnose };
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const [warn, setWarn] = useState<string[]>([]);
-  const [stage, setStage] = useState("fetching");
-  const [stats, setStats] = useState<SourceStat[]>([]);
-  const [li, setLi] = useState<SearchStatus["linkedin"]>(null);
   const [moreFilters, setMoreFilters] = useState(false);
   const max = ai.config?.max_jobs ?? 100;
-  const upd = (patch: Partial<SearchParams>) => props.setParams({ ...p, ...patch });
+  const upd = (patch: Partial<SearchParams>) => setParams({ ...p, ...patch });
   // a validation/run error is stale once the user changes what it was about
   useEffect(() => { if (!busy) setErr(""); }, [resume.preview, p.title, sources]);  // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -61,7 +48,7 @@ export function SetupStep(props: {
 
   async function run() {
     if (problem) { setErr(problem); return; }
-    setErr(""); setWarn([]); setBusy(true); setStage("fetching"); setStats([]); setLi(null);
+    setErr(""); setBusy(true);
     try {
       let searchId: string;
       if (sources.mode === "paste") {
@@ -73,26 +60,8 @@ export function SetupStep(props: {
           ...(p.time_range === "custom" ? { custom_hours: Math.round(opts.hours) } : {}), ...sourcesPayload(sources) };
         ({ search_id: searchId } = await post<{ search_id: string }>("/api/search", body));
       }
-      let s: SearchStatus, misses = 0;
-      for (;;) {
-        try { s = await api<SearchStatus>(`/api/search/${searchId}`); misses = 0; }
-        catch (e) { if (++misses >= 5) throw e; await new Promise((r) => setTimeout(r, 1000)); continue; }
-        setStats(s.sources ?? []); setLi(s.linkedin ?? null);
-        if (s.status !== "running") break;
-        await new Promise((r) => setTimeout(r, 800));
-      }
-      if (s.status === "error") throw new Error(s.error || "Search failed.");
-      setWarn(s.warnings ?? []);
-      if (!s.jobs?.length) {
-        const failed = (s.sources ?? []).filter((x) => x.status === "error");
-        throw new Error(failed.length ? "No relevant jobs found. Some sources failed; see the list above." :
-          "No relevant jobs found. Try a broader title, a different location, a longer time range, fewer filters or more sources.");
-      }
-      if (opts.review) { props.onReview(searchId, s); return; }
-      const notes = [...(s.warnings ?? []), ...(s.sources ?? []).filter((x) => x.status === "error").map((x) => `${x.name}: ${x.message}`)];
-      await props.analyze(searchId, s.jobs.map((j) => j.id), setStage, notes);
-    } catch (e) { setErr((e as Error).message); }
-    finally { setBusy(false); }
+      navigate(`/search/${searchId}${opts.review ? "" : "?auto=1"}`);
+    } catch (e) { setErr((e as Error).message); setBusy(false); }
   }
 
   return (
@@ -102,7 +71,7 @@ export function SetupStep(props: {
         <p className="lead">Upload your CV, describe the role, pick where to search. We collect postings from LinkedIn, job boards and company career sites, score your resume against every requirement, and show exactly what to improve.</p>
       </div>
       <div className="setup-grid">
-        <ResumeCard value={resume} onChange={props.setResume} />
+        <ResumeCard value={resume} onChange={setResume} />
         <div className="card setup-card">
           <div className="card-head"><span className="num">2</span><div><h2>The role</h2><small>{sources.mode === "portals" ? "What to search for" : "Optional for pasted/sample jobs"}</small></div></div>
           <label className="field"><span>Job title {titleNeeded && <b className="req">*</b>}</span>
@@ -158,12 +127,10 @@ export function SetupStep(props: {
         </div>
         <div className="run-row">
           <small className="muted">{problem || "Ready."}</small>
-          <button className="btn primary big" onClick={run} disabled={busy} data-testid="run">{busy ? "Working…" : opts.review ? "Find jobs" : "Find jobs & analyze"}</button>
+          <button className="btn primary big" onClick={run} disabled={busy} data-testid="run">{busy ? "Starting…" : opts.review ? "Find jobs" : "Find jobs & analyze"}</button>
         </div>
       </div>
 
-      {(busy || stats.length > 0) && <SearchProgress stage={busy ? stage : "done"} sources={stats} linkedin={li} />}
-      {warn.map((w, i) => <Alert key={i} kind="warn">{w}</Alert>)}
       {err && (
         <div className="alert error" role="alert">
           <div>{err}</div>
