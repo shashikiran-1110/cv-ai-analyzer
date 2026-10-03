@@ -70,3 +70,56 @@ def test_aggregate_counts():
     assert agg["skill_gaps"][0]["jobs"] == 4
     assert {g["skill"] for g in agg["skill_gaps"]} == {"Kubernetes", "Terraform"}
     assert sum(agg["distribution"]) == 4
+
+
+import pytest  # noqa: E402
+
+FALSE_POSITIVE_CASES = {
+    "the rest of the team": set(), "built REST APIs": {"REST APIs", "API Design"}, "you'll excel in this role": set(),
+    "advanced Excel and VBA": {"Excel", "VBA"}, "react quickly to incidents": set(), "React and Redux": {"React", "Redux"},
+    "work with our sales team": set(), "B2B sales experience": {"Sales"}, "Node.js services": {"Node.js"},
+    "JS and TypeScript": {"JavaScript", "TypeScript"}, "C++ and C#": {"C++", "C#"}, "Go (golang)": {"Go"},
+    "a node in the graph": set(), "Sketch the architecture": set(), "UX research and UI/UX": {"UX Design"},
+    "ready to go": set(), "R&D": set(), "Java and JavaScript": {"Java", "JavaScript"}, ".NET Core": {".NET"},
+}
+
+
+@pytest.mark.parametrize("text,want", FALSE_POSITIVE_CASES.items())
+def test_skill_extraction_exact(text, want):
+    assert skills.extract_skills(text) == want
+
+
+def test_requirement_lines_are_section_aware():
+    desc = ("About us\nWe are a fast-growing fintech with great benefits.\nWhat you'll do\n• Build data pipelines daily\n"
+            "Requirements\n• 5+ years of experience in data engineering\n• Strong Python and SQL\n"
+            "• Tableau or Power BI\n• Bachelor's degree in Computer Science\n"
+            "Nice to have\n• Kubernetes\n• Experience mentoring junior engineers\nBenefits\n• Private health insurance for you\n")
+    lines = matcher.requirement_lines(desc)
+    texts = [t for t, _ in lines]
+    assert "Build data pipelines daily" not in texts and not any("health insurance" in t for t in texts)
+    assert ("Strong Python and SQL", False) in lines and ("Experience mentoring junior engineers", True) in lines
+    r = matcher.score_job({"id": "x", "title": "Data Engineer", "description": desc}, profile())
+    by_text = {q["text"]: q for q in r["requirements"]}
+    assert by_text["Strong Python and SQL"]["status"] == "met"
+    assert by_text["Tableau or Power BI"]["status"] == "missing"
+    assert by_text["5+ years of experience in data engineering"]["status"] == "met"
+    assert r["education_required"] == "Bachelor's" and r["education_strict"]
+    assert any("Bachelor" in b for b in r["blockers"])               # Jane's resume lists no degree
+    assert set(r["components"]) == {"skills", "requirements", "role", "experience", "semantic"}
+
+
+def test_education_levels_and_softeners():
+    assert matcher.education_level("MSc in Data Science, BSc Maths") == "Master's"
+    assert matcher.education_level("B.Tech in CSE") == "Bachelor's"
+    assert matcher.education_level("no degree here") is None
+    lvl, strict, _ = matcher.required_education([("Bachelor's degree or equivalent experience", False)])
+    assert lvl == "Bachelor's" and not strict
+    lvl, strict, _ = matcher.required_education([("PhD or Master's in a quantitative field required", False)])
+    assert lvl == "Master's" and strict
+
+
+def test_semantic_similarity_ranks_related_text_higher():
+    resume = "Built ETL pipelines and data warehouse models for finance reporting"
+    idf = matcher.corpus_idf([resume, "data warehouse pipelines finance", "patient care nursing ward"])
+    assert matcher.semantic_similarity(resume, "data warehouse pipelines finance", idf) > \
+        matcher.semantic_similarity(resume, "patient care nursing ward", idf)

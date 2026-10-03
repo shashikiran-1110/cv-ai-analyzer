@@ -1,17 +1,26 @@
-"""Deterministic resume-vs-job scoring.
+"""Deterministic, explainable resume-vs-job scoring (matcher v2).
 
-score = 60% skill coverage + 25% role/title fit + 15% experience fit  (0-100)
-Skills in a "preferred / nice to have" section count half; soft skills count half.
+score (0-100) = 40% skills + 20% requirements + 15% role fit + 15% experience + 10% semantic similarity
+                minus small penalties for hard blockers (e.g. a required degree level not found).
+
+- skills:        taxonomy skills; required 1.0, preferred ("nice to have") 0.5, soft skills half weight
+- requirements:  each requirement *line* of the posting is checked against the resume (skills owned,
+                 years, degree, or key terms) and marked met / partial / missing
+- role fit:      the posting's role words in the resume (headline weighted)
+- experience:    required years (stated, or inferred from seniority) vs years found on the resume
+- semantic:      TF-IDF cosine similarity between resume and posting (catches overlap outside the taxonomy)
 """
 from __future__ import annotations
 
+import math
 import re
 from collections import Counter
 from dataclasses import dataclass
+from typing import Optional
 
 from . import skills as sk
 
-W_SKILLS, W_TITLE, W_EXP = 0.60, 0.25, 0.15
+W = {"skills": 0.40, "requirements": 0.20, "role": 0.15, "experience": 0.15, "semantic": 0.10}
 
 _PREFERRED_HEADING = re.compile(
     r"(?im)^\W*(nice[\s-]*to[\s-]*haves?|preferred|bonus|good to have|desirable|"
@@ -22,6 +31,7 @@ _REQ_YEARS = re.compile(
     r"|experience[^.\n]{0,40}?(\d{1,2})\s*\+?\s*(?:years?|yrs?)",
     re.IGNORECASE,
 )
+_LINE_YEARS = re.compile(r"(\d{1,2})\s*\+?\s*(?:(?:-|–|to)\s*\d{1,2}\s*\+?\s*)?(?:years?|yrs?)\b", re.I)
 _SENIORITY_YEARS = [
     (re.compile(r"\b(principal|staff|head of|director)\b", re.I), 8),
     (re.compile(r"\b(lead|manager)\b", re.I), 6),
@@ -38,12 +48,61 @@ _STOP = set(
     "a an and are as at be by for from has have in is it its of on or our that the their this to we will with you your "
     "about all also any can more must other per such team work working years year experience strong ability "
     "skills including etc new over us who what when which role job responsibilities requirements qualifications "
-    "company looking join help build using use well within across candidate position opportunity benefits".split()
+    "company looking join help build using use well within across candidate position opportunity benefits "
+    "able excellent good great solid proven knowledge understanding familiarity familiar proficiency proficient "
+    "plus bonus nice preferred required requirement must should would like ideal ideally least minimum demonstrated "
+    "relevant related similar equivalent field environment environments based high level highly hands ensure "
+    "within into through both each other them they these those where while you'll we're you're it's".split()
 )
 
+# ---------- education ----------
+_EDU = [
+    ("PhD", 4, re.compile(r"\b(ph\.?\s?d|doctorate|doctoral)\b", re.I)),
+    ("Master's", 3, re.compile(r"\b(master'?s?|m\.\s?sc|msc|m\.s\.|mba|m\.?eng|m\.?\s?tech|post-?graduate)\b", re.I)),
+    ("Bachelor's", 2, re.compile(r"\b(bachelor'?s?|b\.\s?sc|bsc|b\.s\.|b\.a\.|b\.?eng|b\.?\s?tech|undergraduate degree|"
+                                 r"(?:university|college) degree|degree in)\b", re.I)),
+]
+_EDU_RANK = {name: rank for name, rank, _ in _EDU}
+_DEGREE_CUE = re.compile(r"\b(degree|bachelor|master|ph\.?\s?d|doctorate|bsc|msc|b\.s\.|m\.s\.|mba)\b", re.I)
+_SOFTENER = re.compile(r"\b(or equivalent|equivalent (?:practical |work )?experience|preferred|a plus|nice to have|"
+                       r"desirable|or similar experience|bonus)\b", re.I)
 
+
+def education_level(text: str) -> Optional[str]:
+    """Highest degree level mentioned (resume side)."""
+    for name, _, pat in _EDU:
+        if pat.search(text):
+            return name
+    return None
+
+
+def required_education(lines: list[tuple[str, bool]]) -> tuple[Optional[str], bool, str]:
+    """(level, strict, line) from requirement lines. Lowest level named in a degree line is the bar."""
+    for text, preferred in lines:
+        if not _DEGREE_CUE.search(text):
+            continue
+        levels = [name for name, _, pat in _EDU if pat.search(text)]
+        level = min(levels, key=lambda n: _EDU_RANK[n]) if levels else "Bachelor's"
+        strict = not preferred and not _SOFTENER.search(text)
+        return level, strict, text
+    return None, False, ""
+
+
+# ---------- text utils ----------
 def _tokens(text: str) -> list[str]:
     return re.findall(r"[a-z][a-z+#.\-]{2,}", text.lower())
+
+
+def _stem(w: str) -> str:
+    w = w.strip(".-")
+    for suf in ("ing", "ies", "es", "s", "ed"):
+        if len(w) > 5 and w.endswith(suf):
+            return w[: -len(suf)] + ("y" if suf == "ies" else "")
+    return w
+
+
+def _content_terms(text: str) -> list[str]:
+    return [_stem(t) for t in _tokens(text) if t not in _STOP and len(t) > 3]
 
 
 def split_requirements(description: str) -> tuple[str, str]:
@@ -54,6 +113,82 @@ def split_requirements(description: str) -> tuple[str, str]:
     return description, ""
 
 
+# ---------- requirement lines ----------
+_H_REQ = re.compile(r"(requirement|qualification|what you(?:'ll)? (?:need|bring)|who you are|about you|you have|"
+                    r"you(?:'ll)? have|must[\s-]have|skills|what we(?:'re| are) looking for|experience|your profile|"
+                    r"you should|you bring|ideal candidate)", re.I)
+_H_PREF = re.compile(r"(nice[\s-]*to[\s-]*have|preferred|bonus|good to have|desirable|a plus|pluses|extra credit|ideal)", re.I)
+_H_SKIP = re.compile(r"(benefit|perk|what we offer|we offer|about us|about the company|who we are|why (?:join|us|work)|"
+                     r"compensation|salary|equal opportunit|diversity|our values|how to apply|interview process|"
+                     r"responsibilit|what you(?:'ll)? do|the role|about the role|day[\s-]to[\s-]day|your mission|"
+                     r"in this role|you will|what you will)", re.I)
+_CUE = re.compile(r"\b(experience|proficien|knowledge|familiar|degree|must|required|ability to|skills?|years?|"
+                  r"understanding|expertise|background in|certif|fluent|hands-on)\b", re.I)
+_BULLET = re.compile(r"^\s*(?:[•\-*·▪►◦–]|\d{1,2}[.)])\s*")
+
+
+def requirement_lines(description: str) -> list[tuple[str, bool]]:
+    """Extract (line, is_preferred) requirement statements, section-aware."""
+    lines = [l.strip() for l in description.splitlines() if l.strip()]
+    section: Optional[str] = None
+    found_req = False
+    out: list[tuple[str, bool]] = []
+    loose: list[tuple[str, bool]] = []
+    for raw in lines:
+        is_bullet = bool(_BULLET.match(raw))
+        text = _BULLET.sub("", raw).strip()
+        is_heading = not is_bullet and len(text) <= 70 and (text.endswith(":") or len(text.split()) <= 7)
+        if is_heading:
+            if _H_PREF.search(text):
+                section = "pref"
+                continue
+            if _H_SKIP.search(text):
+                section = "skip"
+                continue
+            if _H_REQ.search(text):
+                section, found_req = "req", True
+                continue
+        if not (15 <= len(text) <= 320):
+            continue
+        if section in ("req", "pref"):
+            out.append((text, section == "pref"))
+        elif section != "skip" and (is_bullet or _CUE.search(text)) and _CUE.search(text):
+            loose.append((text, bool(_H_PREF.search(text))))
+    if not found_req and not any(p for _, p in out):
+        out = loose + out
+    return out[:25]
+
+
+# ---------- semantic similarity ----------
+def _grams(text: str) -> Counter:
+    terms = _content_terms(text)
+    c = Counter(terms)
+    c.update(f"{a} {b}" for a, b in zip(terms, terms[1:]))
+    return c
+
+
+def corpus_idf(docs: list[str]) -> dict[str, float]:
+    df: Counter = Counter()
+    for d in docs:
+        df.update(set(_grams(d)))
+    n = len(docs)
+    return {t: math.log((1 + n) / (1 + c)) + 1 for t, c in df.items()}
+
+
+def semantic_similarity(a: str, b: str, idf: Optional[dict[str, float]] = None) -> float:
+    ga, gb = _grams(a), _grams(b)
+    if not ga or not gb:
+        return 0.0
+    w = (lambda t: idf.get(t, 1.0)) if idf else (lambda t: 1.0)
+    va = {t: (1 + math.log(c)) * w(t) for t, c in ga.items()}
+    vb = {t: (1 + math.log(c)) * w(t) for t, c in gb.items()}
+    dot = sum(v * vb.get(t, 0.0) for t, v in va.items())
+    na = math.sqrt(sum(v * v for v in va.values()))
+    nb = math.sqrt(sum(v * v for v in vb.values()))
+    return dot / (na * nb) if na and nb else 0.0
+
+
+# ---------- years / role ----------
 def required_years(title: str, description: str) -> tuple[float | None, bool]:
     """(years, inferred). Prefers an explicit 'N years of experience' statement."""
     found = []
@@ -100,18 +235,46 @@ class ResumeProfile:
     skills: set[str]
     years: float
     head: str
+    education: Optional[str] = None
+    terms: frozenset = frozenset()
 
     @classmethod
     def build(cls, text: str, years: float, extra_skills: set[str] | None = None) -> "ResumeProfile":
-        return cls(text=text, skills=sk.extract_skills(text) | (extra_skills or set()), years=years, head=text[:400])
+        return cls(text=text, skills=sk.extract_skills(text) | (extra_skills or set()), years=years, head=text[:400],
+                   education=education_level(text), terms=frozenset(_content_terms(text)))
 
 
-def score_job(job: dict, profile: ResumeProfile) -> dict:
+def _line_coverage(text: str, profile: ResumeProfile) -> tuple[Optional[float], list[str]]:
+    """Coverage 0-1 of one requirement line (None = can't judge), plus the skills it's missing."""
+    line_skills = sk.extract_skills(text)
+    if line_skills:
+        owned = [s for s in line_skills if s in profile.skills]
+        missing = sorted(s for s in line_skills if s not in profile.skills)
+        if owned and re.search(r"\bor\b|/|\beither\b|\bsimilar\b|\bequivalent\b", text, re.I):
+            return 1.0, []  # "Tableau or Power BI": one is enough
+        return len(owned) / len(line_skills), missing
+    m = _LINE_YEARS.search(text)
+    if m and re.search(r"experience|exp\b", text, re.I):
+        need = int(m.group(1))
+        if need == 0:
+            return 1.0, []
+        return (min(1.0, profile.years / need) if profile.years else 0.3), []
+    if _DEGREE_CUE.search(text):
+        levels = [name for name, _, pat in _EDU if pat.search(text)]
+        need = min((_EDU_RANK[n] for n in levels), default=2)
+        have = _EDU_RANK.get(profile.education or "", 0)
+        return (1.0 if have >= need else (0.5 if _SOFTENER.search(text) else 0.0)), []
+    terms = set(_content_terms(text))
+    if len(terms) < 2:
+        return None, []
+    return len(terms & profile.terms) / len(terms), []
+
+
+def score_job(job: dict, profile: ResumeProfile, idf: Optional[dict[str, float]] = None) -> dict:
     desc = job.get("description") or ""
     title = job.get("title") or ""
     req_text, pref_text = split_requirements(desc)
-    # title text counts as a requirement signal too
-    req_skills = sk.extract_skills(req_text + "\n" + title)
+    req_skills = sk.extract_skills(req_text + "\n" + title)   # title counts as a requirement signal too
     pref_skills = sk.extract_skills(pref_text) - req_skills
 
     weights: dict[str, float] = {}
@@ -141,6 +304,20 @@ def score_job(job: dict, profile: ResumeProfile) -> dict:
     else:
         skill_score = 0.0
 
+    # requirement lines
+    reqs = []
+    num = den = 0.0
+    for text, preferred in requirement_lines(desc):
+        cov, miss = _line_coverage(text, profile)
+        if cov is None:
+            continue
+        w = 0.5 if preferred else 1.0
+        num += w * cov
+        den += w
+        reqs.append({"text": text, "preferred": preferred, "coverage": round(cov, 2), "missing": miss,
+                     "status": "met" if cov >= 0.75 else "partial" if cov >= 0.35 else "missing"})
+    req_score = num / den if den else skill_score
+
     t_score = title_fit(title, profile.text, profile.head)
     req_yrs, inferred = required_years(title, desc)
     if req_yrs is None:
@@ -152,21 +329,43 @@ def score_job(job: dict, profile: ResumeProfile) -> dict:
     else:
         e_score = min(1.0, profile.years / req_yrs)
 
-    total = W_SKILLS * skill_score + W_TITLE * t_score + W_EXP * e_score
+    sem_raw = semantic_similarity(profile.text, desc, idf) if desc else 0.0
+    sem_score = min(1.0, sem_raw / 0.30)
+
+    total = (W["skills"] * skill_score + W["requirements"] * req_score + W["role"] * t_score
+             + W["experience"] * e_score + W["semantic"] * sem_score)
+
+    blockers: list[str] = []
+    edu_req, edu_strict, _ = required_education(requirement_lines(desc))
+    if edu_req and _EDU_RANK[edu_req] > _EDU_RANK.get(profile.education or "", 0):
+        if edu_strict:
+            blockers.append(f"Requires a {edu_req} degree; none found on your resume.")
+            total -= 0.08
+        else:
+            blockers.append(f"Prefers a {edu_req} degree (or equivalent experience); none found on your resume.")
+            total -= 0.02
+    if req_yrs and not inferred and profile.years and profile.years < 0.6 * req_yrs:
+        blockers.append(f"Asks for {req_yrs:.0f}+ years of experience; your resume shows about {profile.years:.0f}.")
     required_missing = sorted(s for s in req_skills if s not in profile.skills)
-    low_conf = len(desc) < 80 or (not weights and not keyword_mode)
+    low_conf = len(desc) < 80 or (not weights and not keyword_mode and not reqs)
     if len(desc) < 80:  # title-only: can't judge skills fairly
         total = min(total, 0.45)
+    total = max(0.0, min(1.0, total))
 
     return {
         "id": job["id"], "title": title, "company": job.get("company", ""),
         "location": job.get("location", ""), "url": job.get("url", ""), "posted": job.get("posted", ""),
+        "source": job.get("source", ""), "sources": job.get("sources") or [job.get("source", "")],
+        "salary": job.get("salary", ""), "remote": job.get("remote"),
         "score": round(total * 100),
         "components": {
-            "skills": round(skill_score * 100), "role": round(t_score * 100), "experience": round(e_score * 100),
+            "skills": round(skill_score * 100), "requirements": round(req_score * 100), "role": round(t_score * 100),
+            "experience": round(e_score * 100), "semantic": round(sem_score * 100),
         },
         "matched_skills": matched, "missing_skills": missing, "required_missing": required_missing,
         "matched_keywords": matched_kw, "missing_keywords": missing_kw,
+        "requirements": reqs, "requirements_met": sum(1 for r in reqs if r["status"] == "met"),
+        "blockers": blockers, "education_required": edu_req, "education_strict": edu_strict,
         "required_years": req_yrs, "required_years_inferred": inferred,
         "confidence": "low" if low_conf else "high",
     }
@@ -186,6 +385,11 @@ def aggregate(results: list[dict], profile: ResumeProfile, threshold: int) -> di
     buckets = [0] * 5  # 0-19, 20-39, 40-59, 60-79, 80-100
     for s in scores:
         buckets[min(4, s // 20)] += 1
+    blockers: Counter = Counter()
+    for r in results:
+        for b in r.get("blockers", []):
+            blockers[re.sub(r"\d+\+? years.*about \d+", "N+ years of experience (more than your resume shows)", b)] += 1
+    by_source: Counter = Counter(r.get("source") or "unknown" for r in results)
     return {
         "job_count": n,
         "avg_score": round(sum(scores) / n) if n else 0,
@@ -194,6 +398,7 @@ def aggregate(results: list[dict], profile: ResumeProfile, threshold: int) -> di
         "distribution": buckets,
         "resume_skills": sorted(profile.skills),
         "resume_years": profile.years,
+        "resume_education": profile.education,
         "skill_gaps": [
             {"skill": s, "category": sk.category_of(s), "jobs": c, "pct": round(100 * c / n) if n else 0}
             for s, c in gap.most_common(15)
@@ -203,4 +408,6 @@ def aggregate(results: list[dict], profile: ResumeProfile, threshold: int) -> di
             for s, c in owned.most_common(12) if c > 0
         ],
         "unused_skills": sorted(s for s in profile.skills if s not in in_demand_total),
+        "common_blockers": [{"text": t, "jobs": c} for t, c in blockers.most_common(5)],
+        "by_source": dict(by_source),
     }

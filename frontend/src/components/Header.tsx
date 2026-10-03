@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { useAi } from "../ai";
 
-const STEPS = ["Search", "Jobs", "Resume", "Report"];
+const STEPS = ["Setup", "Review jobs", "Report"];
 
-export function Header({ step, maxStep, go }: { step: number; maxStep: number; go: (n: number) => void }) {
+export function Header({ step, maxStep, go, onDiagnose }: { step: number; maxStep: number; go: (n: number) => void; onDiagnose: () => void }) {
   const ai = useAi();
   const [theme, setTheme] = useState<string>(() => { try { return localStorage.getItem("cvm.theme") || "auto"; } catch { return "auto"; } });
   useEffect(() => {
@@ -36,6 +36,7 @@ export function Header({ step, maxStep, go }: { step: number; maxStep: number; g
           </ol>
         </nav>
         <div className="top-actions">
+          <button className="btn small" onClick={onDiagnose} title="Check which job sources and AI APIs the server can reach">Connection check</button>
           <button className="ai-chip" onClick={() => ai.openModal(true)} title={ai.message || "Configure AI"}>
             <i className={`dot-s ${dot}`} /> {label}
           </button>

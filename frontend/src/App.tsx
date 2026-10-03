@@ -1,47 +1,72 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { AiProvider, useAi } from "./ai";
+import { api, SERVER_DOWN } from "./api";
 import { AiSettingsModal } from "./components/AiSettingsModal";
+import { DiagnoseModal } from "./components/DiagnoseModal";
 import { Header } from "./components/Header";
 import { JobsStep } from "./components/JobsStep";
 import { ReportStep } from "./components/ReportStep";
-import { ResumeStep } from "./components/ResumeStep";
-import { SearchStep } from "./components/SearchStep";
-import type { Analysis, JobSummary, SearchParams, SearchQuery } from "./types";
+import { EMPTY_RESUME, type ResumeState } from "./components/ResumeCard";
+import { DEFAULT_PARAMS, SetupStep, type Options } from "./components/SetupStep";
+import { DEFAULT_SOURCES, type SourceConfig } from "./components/SourcesPicker";
+import type { Analysis, SearchParams, SearchStatus } from "./types";
 
 function Shell() {
   const ai = useAi();
   const [step, setStep] = useState(1);
   const [maxStep, setMaxStep] = useState(1);
-  const [searchId, setSearchId] = useState("");
-  const [jobs, setJobs] = useState<JobSummary[]>([]);
-  const [query, setQuery] = useState<SearchQuery | null>(null);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [resume, setResume] = useState<ResumeState>(EMPTY_RESUME);
+  const [params, setParams] = useState<SearchParams>(DEFAULT_PARAMS);
+  const [sources, setSources] = useState<SourceConfig>(DEFAULT_SOURCES);
+  const [opts, setOpts] = useState<Options>({ threshold: 60, wantAi: true, review: false, hours: 72 });
+  const [search, setSearch] = useState<{ id: string; status: SearchStatus } | null>(null);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
-  const [threshold, setThreshold] = useState(ai.config?.default_threshold ?? 60);
-  const [prefill, setPrefill] = useState<SearchParams | null>(null);
+  const [diag, setDiag] = useState(false);
+  const [notes, setNotes] = useState<string[]>([]);
+  const [serverDown, setServerDown] = useState(false);
+
+  useEffect(() => {
+    const check = () => api("/api/health").then(() => setServerDown(false)).catch(() => setServerDown(true));
+    void check();
+    const t = setInterval(check, 15000);
+    return () => clearInterval(t);
+  }, []);
 
   const go = (n: number) => { setStep(n); setMaxStep((m) => Math.max(m, n)); window.scrollTo({ top: 0, behavior: "smooth" }); };
 
+  const analyze = useCallback(async (searchId: string, jobIds: string[], onStage: (s: string) => void, sourceNotes: string[] = []) => {
+    const aiOn = opts.wantAi && ai.usable;
+    onStage(aiOn ? "ai" : "analyzing");
+    const fd = new FormData();
+    fd.append("search_id", searchId);
+    if (resume.mode === "pdf" && resume.file) fd.append("resume", resume.file); else fd.append("resume_text", resume.text);
+    fd.append("threshold", String(opts.threshold));
+    fd.append("use_ai", aiOn ? "true" : "false");
+    fd.append("job_ids", JSON.stringify(jobIds));
+    fd.append("extra_skills", JSON.stringify(resume.extra));
+    const a = await api<Analysis>("/api/analyze", { method: "POST", body: fd, headers: aiOn ? ai.headers : {} });
+    setAnalysis(a);
+    setNotes(sourceNotes);
+    setMaxStep(3);
+    go(3);
+  }, [opts, ai, resume]);
+
   return (
     <>
-      <Header step={step} maxStep={maxStep} go={go} />
+      <Header step={step} maxStep={maxStep} go={go} onDiagnose={() => setDiag(true)} />
+      {serverDown && <div className="banner" role="alert">{SERVER_DOWN} <button className="link" onClick={() => setDiag(true)}>Details</button></div>}
       <main className="wrap">
-        {step === 1 && (
-          <SearchStep initial={prefill} onDone={(id, j, q) => {
-            setSearchId(id); setJobs(j); setQuery(q); setSelected(new Set(j.map((x) => x.id))); setAnalysis(null);
-            setPrefill({ title: q.title, location: q.location, count: q.count, time_range: q.time_range, experience: q.experience, job_types: q.job_types, workplace: q.workplace, sort: q.sort });
-            setMaxStep(2); go(2);
-          }} />
-        )}
-        {step === 2 && <JobsStep jobs={jobs} query={query} selected={selected} setSelected={setSelected} onBack={() => go(1)} onNext={() => go(3)} />}
-        {step === 3 && (
-          <ResumeStep searchId={searchId} jobIds={[...selected]} defaultThreshold={threshold} onBack={() => go(2)}
-            onDone={(a, t) => { setAnalysis(a); setThreshold(t); go(4); }} />
-        )}
-        {step === 4 && analysis && <ReportStep key={analysis.analysis_id} initial={analysis} initialThreshold={threshold} onRestart={() => go(1)} onResume={() => go(3)} />}
+        <div hidden={step !== 1}>
+          <SetupStep resume={resume} setResume={setResume} params={params} setParams={setParams} sources={sources} setSources={setSources}
+            opts={opts} setOpts={setOpts} analyze={analyze} openDiagnose={() => setDiag(true)}
+            onReview={(id, s) => { setSearch({ id, status: s }); setMaxStep(2); go(2); }} />
+        </div>
+        {step === 2 && search && <JobsStep search={search.status} searchId={search.id} onBack={() => go(1)} analyze={analyze} />}
+        {step === 3 && analysis && <ReportStep key={analysis.analysis_id} initial={analysis} initialThreshold={opts.threshold} notes={notes} onRestart={() => go(1)} />}
       </main>
-      <footer className="wrap foot">Scores are an automated estimate of skill, role and experience overlap, not a hiring decision. Use them to prioritise and to spot gaps.</footer>
+      <footer className="wrap foot">Scores are an automated, explainable estimate (skills, requirements, role, experience, semantic overlap), not a hiring decision. Use them to prioritise and to spot gaps.</footer>
       {ai.modalOpen && <AiSettingsModal />}
+      {diag && <DiagnoseModal onClose={() => setDiag(false)} />}
     </>
   );
 }

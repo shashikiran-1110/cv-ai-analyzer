@@ -12,18 +12,26 @@ _RAW: dict[str, dict[str, list[str]]] = {
         "Scala": ["scala"], "R": ["r programming", "rstudio", "r language"], "SQL": ["sql"],
         "Bash": ["bash", "shell scripting", "shell script"], "MATLAB": ["matlab"], "Perl": ["perl"],
         "C": ["c programming", "c language"], "Dart": ["dart"], "Objective-C": ["objective-c"],
+        "Elixir": ["elixir"], "Haskell": ["haskell"], "Clojure": ["clojure"], "Solidity": ["solidity"],
+        "Groovy": ["groovy"], "VBA": ["vba"], "Lua": ["lua"], "Julia": ["julia language"],
+    },
+    "Mobile": {
+        "iOS": ["ios"], "Android": ["android"], "SwiftUI": ["swiftui"], "Jetpack Compose": ["jetpack compose"],
+        "Xamarin": ["xamarin"],
     },
     "Web & Frameworks": {
-        "React": ["react", "react.js", "reactjs"], "Angular": ["angular", "angularjs"],
+        "React": ["re:react(?!\\s+(?:to|quickly|fast|swiftly|calmly))", "react.js", "reactjs"], "Angular": ["angular", "angularjs"],
         "Vue": ["vue", "vue.js", "vuejs"], "Next.js": ["next.js", "nextjs"],
-        "Node.js": ["node.js", "nodejs", "node"], "Express": ["express.js", "expressjs"],
+        "Node.js": ["node.js", "nodejs", "node js"], "Express": ["express.js", "expressjs"],
         "Django": ["django"], "Flask": ["flask"], "FastAPI": ["fastapi"],
         "Spring": ["spring", "spring boot", "springboot"], ".NET": [".net", "dotnet", "asp.net"],
         "Rails": ["ruby on rails", "rails"], "Laravel": ["laravel"], "HTML": ["html", "html5"],
         "CSS": ["css", "css3", "sass", "scss"], "Tailwind": ["tailwind", "tailwindcss"],
-        "GraphQL": ["graphql"], "REST APIs": ["rest", "restful", "rest api", "rest apis", "restful apis"],
+        "GraphQL": ["graphql"], "REST APIs": ["restful", "rest api", "rest apis", "restful apis", "re:rest(?:ful)?\\s*(?:/\\s*graphql\\s*)?(?:api|apis|services|web services|endpoints)"],
         "Microservices": ["microservices", "microservice"], "gRPC": ["grpc"],
-        "React Native": ["react native"], "Flutter": ["flutter"],
+        "React Native": ["react native"], "Flutter": ["flutter"], "Svelte": ["svelte", "sveltekit"],
+        "Redux": ["redux"], "jQuery": ["jquery"], "Webpack": ["webpack"], "WebSockets": ["websockets", "websocket"],
+        "Accessibility": ["accessibility", "wcag", "a11y"],
     },
     "Cloud & DevOps": {
         "AWS": ["aws", "amazon web services"], "Azure": ["azure"], "GCP": ["gcp", "google cloud"],
@@ -32,9 +40,12 @@ _RAW: dict[str, dict[str, list[str]]] = {
                                           "continuous deployment"],
         "Jenkins": ["jenkins"], "GitHub Actions": ["github actions"], "GitLab CI": ["gitlab ci"],
         "Linux": ["linux", "unix"], "Git": ["git", "github", "gitlab", "bitbucket"],
-        "Serverless": ["serverless", "lambda"], "Prometheus": ["prometheus"], "Grafana": ["grafana"],
+        "Serverless": ["serverless", "aws lambda", "lambda functions"], "Prometheus": ["prometheus"], "Grafana": ["grafana"],
         "Datadog": ["datadog"], "Observability": ["observability", "monitoring"],
         "Networking": ["tcp/ip", "networking", "dns", "load balancing"], "Security": ["cybersecurity", "infosec", "owasp"],
+        "CloudFormation": ["cloudformation"], "Pulumi": ["pulumi"], "Helm": ["helm charts", "helm"], "Argo CD": ["argocd", "argo cd"],
+        "Istio": ["istio", "service mesh"], "Nginx": ["nginx"], "OpenShift": ["openshift"], "Vault": ["hashicorp vault"],
+        "IAM": ["iam", "identity and access management"], "SIEM": ["siem", "splunk"], "Penetration Testing": ["penetration testing", "pentesting", "pen testing"],
     },
     "Data & ML": {
         "Machine Learning": ["machine learning", "ml"], "Deep Learning": ["deep learning"],
@@ -47,14 +58,22 @@ _RAW: dict[str, dict[str, list[str]]] = {
         "ETL": ["etl", "elt", "data pipelines", "data pipeline"], "Data Modeling": ["data modeling", "data modelling"],
         "Statistics": ["statistics", "statistical analysis", "statistical"], "A/B Testing": ["a/b testing", "ab testing", "experimentation"],
         "Tableau": ["tableau"], "Power BI": ["power bi", "powerbi"], "Looker": ["looker"],
-        "Excel": ["excel", "microsoft excel", "spreadsheets"], "Data Visualization": ["data visualization", "data visualisation"],
-        "MLOps": ["mlops"],
+        "Excel": ["re:excel(?!\\s+(?:in|at|as|when|with|under)\\b)", "microsoft excel", "ms excel", "spreadsheets"], "Data Visualization": ["data visualization", "data visualisation"],
+        "MLOps": ["mlops"], "MLflow": ["mlflow"], "Kubeflow": ["kubeflow"], "Hugging Face": ["hugging face", "huggingface", "transformers library"],
+        "LangChain": ["langchain", "llamaindex"], "RAG": ["rag", "retrieval-augmented generation", "retrieval augmented generation"],
+        "Vector Databases": ["vector database", "vector databases", "pinecone", "weaviate", "pgvector", "faiss"],
+        "Prompt Engineering": ["prompt engineering"], "Flink": ["flink"], "Apache Beam": ["apache beam"], "Hive": ["apache hive", "hiveql"],
+        "Presto/Trino": ["presto", "trino", "athena"], "Delta Lake": ["delta lake", "lakehouse"], "Fivetran": ["fivetran", "airbyte"],
+        "Kinesis": ["kinesis"], "AWS Glue": ["aws glue"], "EMR": ["amazon emr", "aws emr"], "SageMaker": ["sagemaker"],
+        "Vertex AI": ["vertex ai"], "Azure Data Factory": ["azure data factory", "adf"], "DAX": ["dax", "power query"],
+        "SAS": ["sas"], "SPSS": ["spss"], "Stata": ["stata"], "Forecasting Models": ["time series", "forecasting models"],
     },
     "Databases": {
         "PostgreSQL": ["postgresql", "postgres"], "MySQL": ["mysql"], "MongoDB": ["mongodb", "mongo"],
         "Redis": ["redis"], "Elasticsearch": ["elasticsearch", "elastic search", "opensearch"],
         "DynamoDB": ["dynamodb"], "Cassandra": ["cassandra"], "Oracle": ["oracle"],
-        "SQL Server": ["sql server", "mssql", "t-sql"], "NoSQL": ["nosql"],
+        "SQL Server": ["sql server", "mssql", "t-sql"], "NoSQL": ["nosql"], "Neo4j": ["neo4j", "graph database"],
+        "Firebase": ["firebase", "firestore"], "SQLite": ["sqlite"], "Cosmos DB": ["cosmos db", "cosmosdb"], "Supabase": ["supabase"],
     },
     "Engineering Practices": {
         "Agile": ["agile"], "Scrum": ["scrum"], "Kanban": ["kanban"], "TDD": ["tdd", "test-driven development"],
@@ -63,6 +82,9 @@ _RAW: dict[str, dict[str, list[str]]] = {
         "Code Review": ["code review", "code reviews"], "Jira": ["jira"],
         "OOP": ["oop", "object-oriented", "object oriented"], "Data Structures": ["data structures", "algorithms"],
         "API Design": ["api design", "apis"], "QA Automation": ["selenium", "cypress", "playwright", "test automation"],
+        "Design Patterns": ["design patterns", "solid principles", "domain-driven design", "ddd"],
+        "Event-Driven Architecture": ["event-driven", "event driven", "pub/sub", "message queues", "rabbitmq", "sqs"],
+        "Performance Optimization": ["performance optimization", "performance tuning", "profiling"],
     },
     "Business & Product": {
         "Project Management": ["project management", "pmp"], "Product Management": ["product management", "product roadmap"],
@@ -72,11 +94,22 @@ _RAW: dict[str, dict[str, list[str]]] = {
         "Digital Marketing": ["digital marketing", "performance marketing", "sem", "ppc"],
         "Financial Modeling": ["financial modeling", "financial modelling", "financial analysis"],
         "Accounting": ["accounting", "gaap", "ifrs"], "Budgeting": ["budgeting", "forecasting"],
-        "Customer Success": ["customer success", "account management"], "Sales": ["b2b sales", "sales", "lead generation"],
-        "Recruiting": ["recruiting", "talent acquisition", "sourcing"], "Figma": ["figma"],
+        "Customer Success": ["customer success", "account management"], "Sales": ["b2b sales", "saas sales", "sales experience", "quota", "lead generation", "business development", "pipeline generation"],
+        "Recruiting": ["recruiting", "talent acquisition", "candidate sourcing"], "Figma": ["figma"],
         "UX Design": ["ux", "user experience", "ui/ux", "user research"], "Business Analysis": ["business analysis", "requirements gathering"],
         "SAP": ["sap"], "Supply Chain": ["supply chain", "logistics", "procurement"],
-        "Compliance": ["compliance", "regulatory", "gdpr", "hipaa", "sox"],
+        "Compliance": ["compliance", "gdpr", "hipaa", "sox", "soc 2", "iso 27001"],
+        "OKRs": ["okrs", "okr"], "Product Analytics": ["product analytics", "amplitude", "mixpanel"],
+        "Marketing Automation": ["marketing automation", "marketo", "mailchimp", "braze"],
+        "Paid Social": ["paid social", "meta ads", "facebook ads", "linkedin ads", "google ads"],
+        "Copywriting": ["copywriting", "copy writing"], "Negotiation": ["negotiation"],
+        "Customer Support": ["customer support", "customer service", "zendesk", "intercom"],
+        "Six Sigma": ["six sigma", "lean six sigma", "lean manufacturing"], "PRINCE2": ["prince2"], "ITIL": ["itil"],
+        "ERP": ["erp", "netsuite", "oracle erp", "workday"], "Bookkeeping": ["bookkeeping", "quickbooks", "xero"],
+        "Patient Care": ["patient care", "clinical care", "bedside"], "EHR": ["ehr", "emr", "electronic health records", "epic systems", "cerner"],
+        "Adobe Creative Suite": ["adobe creative suite", "photoshop", "illustrator", "indesign", "after effects"],
+        "Prototyping": ["prototyping", "wireframing", "wireframes"], "Design Systems": ["design systems", "design system"],
+        "Sketch": ["sketch app"], "Certifications": ["aws certified", "azure certified", "cka", "cissp", "cpa", "cfa", "acca"],
     },
     "Professional Skills": {
         "Communication": ["communication", "communication skills", "written communication", "verbal communication"],
@@ -88,6 +121,8 @@ _RAW: dict[str, dict[str, list[str]]] = {
     },
 }
 
+NO_CANON_ALIAS = {"Sales", "Recruiting", "Sketch", "Certifications", "Prototyping"}
+
 # Skills so generic they should never alone drive a high score; counted at half weight.
 SOFT_CATEGORY = "Professional Skills"
 
@@ -98,10 +133,14 @@ def _compiled() -> list[tuple[str, str, re.Pattern]]:
     for category, skills in _RAW.items():
         for canon, aliases in skills.items():
             # short canonical names ("R", "Go", "C") are ambiguous words; they match only via explicit aliases
-            names = aliases + ([canon] if len(canon) > 2 else [])
+            # skills whose canonical name is also an everyday word match only via their explicit aliases
+            auto = len(canon) > 2 and canon not in NO_CANON_ALIAS and not any(a.startswith("re:") for a in aliases)
+            names = aliases + ([canon] if auto else [])
             alts = sorted({a.lower() for a in names}, key=len, reverse=True)
-            body = "|".join(re.escape(a) for a in alts)
-            pat = re.compile(rf"(?<![A-Za-z0-9_+#.]){body}(?![A-Za-z0-9_+#]|\.[A-Za-z0-9])", re.IGNORECASE)
+            # aliases prefixed "re:" are raw regexes (used to exclude common false positives)
+            body = "|".join(a[3:] if a.startswith("re:") else re.escape(a) for a in alts)
+            # group the alternation so the boundary guards apply to every alias, not just the first/last
+            pat = re.compile(rf"(?<![A-Za-z0-9_+#.])(?:{body})(?![A-Za-z0-9_+#]|\.[A-Za-z0-9])", re.IGNORECASE)
             out.append((canon, category, pat))
     return out
 
@@ -124,7 +163,8 @@ def _lookup() -> dict[str, str]:
         for canon, aliases in skills.items():
             out[canon.lower()] = canon
             for a in aliases:
-                out.setdefault(a.lower(), canon)
+                if not a.startswith("re:"):
+                    out.setdefault(a.lower(), canon)
     return out
 
 

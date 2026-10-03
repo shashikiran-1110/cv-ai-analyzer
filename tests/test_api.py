@@ -107,6 +107,7 @@ async def test_search_filters_forwarded(client, monkeypatch):
                                               "job_types": ["contract"], "workplace": ["remote"], "sort": "relevant"})
         await wait_done(c, r.json()["search_id"])
         assert (await c.post("/api/search", json={"title": "x y", "workplace": ["moon"]})).status_code == 422
+    assert seen.pop("warnings") == []
     assert seen == {"experience": ["entry", "mid_senior"], "job_types": ["contract"],
                     "workplace": ["remote"], "sort": "relevant"}
 
@@ -255,3 +256,79 @@ async def test_anthropic_stream_and_complete(monkeypatch):
     out = [p async for p in llm.stream(cfg, "sys", [{"role": "user", "content": "q"}])]
     assert "".join(out) == "Hi there" and seen["h"]["x-api-key"] == "ak-1"
     assert await llm.complete(cfg, "sys", [{"role": "user", "content": "q"}]) == "done"
+
+
+async def test_sources_listing_and_validation(client):
+    async with client as c:
+        ids = [x["id"] for x in (await c.get("/api/sources")).json()]
+        assert {"linkedin", "remotive", "greenhouse", "adzuna", "urls"} <= set(ids)
+        bad = await c.post("/api/search", json={"title": "data engineer", "sources": ["nope"]})
+        assert bad.status_code == 422 and "nope" in bad.json()["detail"]
+        r = await c.post("/api/search", json={"title": "data engineer", "sources": ["greenhouse"]})
+        assert r.status_code == 422 and "company" in r.json()["detail"]
+        r = await c.post("/api/search", json={"title": "data engineer", "sources": ["adzuna"]})
+        assert r.status_code == 422 and "Adzuna" in r.json()["detail"]
+        r = await c.post("/api/search", json={"title": "data engineer", "sources": ["urls"]})
+        assert r.status_code == 422 and "URL" in r.json()["detail"]
+
+
+async def test_all_sources_failing_reports_each_reason(client, monkeypatch):
+    async def fail(*a, **k):
+        raise linkedin.LinkedInError("Can't connect to linkedin.com (ProxyError).", "network")
+    monkeypatch.setattr(linkedin, "search_jobs", fail)
+    real = httpx.AsyncClient
+
+    def boom(request):
+        raise httpx.ConnectError("blocked")
+    monkeypatch.setattr("app.sources.aggregate.httpx.AsyncClient", lambda **kw: real(transport=httpx.MockTransport(boom)))
+    async with client as c:
+        sid = (await c.post("/api/search", json={"title": "data engineer", "sources": ["linkedin", "remotive"]})).json()["search_id"]
+        s = await wait_done(c, sid)
+    assert s["status"] == "error" and "linkedin.com" in s["error"] and "remotive.com" in s["error"]
+    assert {x["id"]: x["status"] for x in s["sources"]} == {"linkedin": "error", "remotive": "error"}
+
+
+async def test_manual_and_sample_searches(client, resume_pdf):
+    async with client as c:
+        bad = await c.post("/api/search/manual", json={"jobs": [{"title": "X", "description": "short"}]})
+        assert bad.status_code == 422
+        desc = "Requirements\n- Python and SQL\n- Airflow and Spark\n- 3+ years of experience\n" + "More detail here. " * 5
+        r = await c.post("/api/search/manual", json={"jobs": [{"title": "Data Engineer", "company": "Acme", "description": desc}]})
+        sid = r.json()["search_id"]
+        s = (await c.get(f"/api/search/{sid}")).json()
+        assert s["status"] == "done" and s["jobs"][0]["source"] == "manual"
+        a = await c.post("/api/analyze", data={"search_id": sid}, files={"resume": ("cv.pdf", resume_pdf, "application/pdf")})
+        assert a.status_code == 200 and a.json()["jobs"][0]["score"] >= 60
+
+        sid = (await c.post("/api/search/sample", json={"title": "Data Engineer"})).json()["search_id"]
+        s = (await c.get(f"/api/search/{sid}")).json()
+        titles = [j["title"] for j in s["jobs"]]
+        assert all("Data" in t or "Engineer" in t for t in titles) and all(j["source"] == "sample" for j in s["jobs"])
+        a = (await c.post("/api/analyze", data={"search_id": sid}, files={"resume": ("cv.pdf", resume_pdf, "application/pdf")})).json()
+        assert {"requirements", "semantic"} <= set(a["jobs"][0]["components"])
+        assert a["jobs"][0]["requirements"] and "by_source" in a["summary"]
+
+
+async def test_resume_preview(client, resume_pdf):
+    async with client as c:
+        r = (await c.post("/api/resume/preview", files={"resume": ("cv.pdf", resume_pdf, "application/pdf")})).json()
+        assert {"Python", "SQL", "Airflow"} <= set(r["skills"]) and r["years"] >= 6 and r["headline"].startswith("Jane Doe")
+        assert (await c.post("/api/resume/preview", data={"resume_text": "too short"})).status_code == 422
+        bad = await c.post("/api/resume/preview", files={"resume": ("cv.pdf", b"nope", "application/pdf")})
+        assert bad.status_code == 422 and "PDF" in bad.json()["detail"]
+
+
+async def test_diagnose_reports_blocked_hosts(client, monkeypatch):
+    real = httpx.AsyncClient
+
+    def boom(request):
+        raise httpx.ConnectError("blocked")
+    monkeypatch.setattr("app.main.httpx.AsyncClient", lambda **kw: real(transport=httpx.MockTransport(boom), **{k: v for k, v in kw.items() if k == "headers"}))
+    async def probe():
+        return {"ok": False, "kind": "network", "message": "Can't connect to linkedin.com"}
+    monkeypatch.setattr(linkedin, "probe", probe)
+    async with client as c:
+        d = (await c.get("/api/diagnose")).json()
+    assert d["api"]["ok"] and not d["checks"]["linkedin"]["ok"]
+    assert not d["checks"]["remotive"]["ok"] and "remotive.com" in d["checks"]["remotive"]["message"]
+    assert "OpenAI API" in d["checks"] and d["ai_key"]["ok"] is False

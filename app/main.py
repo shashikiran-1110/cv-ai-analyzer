@@ -15,7 +15,13 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Streamin
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import assistant, config, insights, linkedin, llm, matcher, resume, skills
+import httpx
+
+from . import assistant, config, deepmatch, insights, linkedin, llm, matcher, resume, skills
+from . import sources as src
+from .sources import aggregate
+from .sources.sample import sample_jobs
+from .jobmodel import Job
 
 log = logging.getLogger("app")
 app = FastAPI(title="CV AI Analyzer")
@@ -38,6 +44,28 @@ class SearchRequest(BaseModel):
     job_types: list[Literal["full_time", "part_time", "contract", "temporary", "internship", "other"]] = []
     workplace: list[Literal["on_site", "remote", "hybrid"]] = []
     sort: Literal["recent", "relevant"] = "recent"
+    sources: list[str] = Field(default=["linkedin"], min_length=1, max_length=20)
+    companies: dict[Literal["greenhouse", "lever", "ashby"], list[str]] = {}
+    urls: list[str] = Field(default=[], max_length=25)
+    adzuna: Optional[dict[str, str]] = None
+    strict: bool = True
+
+
+class ManualJob(BaseModel):
+    title: str = Field(min_length=2, max_length=200)
+    company: str = Field(default="", max_length=200)
+    location: str = Field(default="", max_length=200)
+    url: str = Field(default="", max_length=2000)
+    description: str = Field(min_length=50, max_length=30000)
+
+
+class ManualSearch(BaseModel):
+    title: str = Field(default="Pasted jobs", max_length=100)
+    jobs: list[ManualJob] = Field(min_length=1, max_length=60)
+
+
+class SampleSearch(BaseModel):
+    title: str = Field(default="", max_length=100)
 
 
 class RescoreRequest(BaseModel):
@@ -128,21 +156,46 @@ async def verify_ai(request: Request):
 
 
 # ---------- search ----------
+@app.get("/api/sources")
+async def list_sources():
+    return [x.public() for x in src.ALL]
+
+
+def _new_search(query: dict, status: str = "running") -> str:
+    _gc(SEARCHES, config.MAX_STORED_SEARCHES)
+    sid = uuid.uuid4().hex
+    SEARCHES[sid] = {"status": status, "stage": "fetching", "done": 0, "total": query.get("count", 0), "jobs": [],
+                     "error": None, "warnings": [], "sources": [], "created": time.time(), "query": query}
+    return sid
+
+
 async def _run_search(sid: str, req: SearchRequest, hours: Optional[int]) -> None:
     state = SEARCHES[sid]
+    q = src.JobQuery(title=req.title.strip(), location=req.location.strip(), count=req.count, hours=hours,
+                     experience=list(req.experience), job_types=list(req.job_types), workplace=list(req.workplace),
+                     sort=req.sort, companies={k: v for k, v in req.companies.items()}, urls=req.urls,
+                     adzuna=req.adzuna, strict=req.strict)
+    chosen = [src.BY_ID[i] for i in dict.fromkeys(req.sources)]
 
-    async def on_progress(stage: str, done: int, total: int) -> None:
-        state.update(stage=stage, done=done, total=total)
+    async def on_update(stats: dict) -> None:
+        state["sources"] = [{k: v for k, v in st.items()} for st in stats.values()]
+        finished = sum(1 for st in stats.values() if st["status"] != "running")
+        li = (stats.get("linkedin") or {}).get("progress")
+        state.update(done=finished, total=len(stats), stage="fetching", linkedin=li)
 
     try:
-        jobs = await linkedin.search_jobs(
-            req.title.strip(), req.location.strip(), req.count, hours, on_progress,
-            experience=req.experience, job_types=req.job_types, workplace=req.workplace, sort=req.sort,
-        )
-        state["jobs"] = [j.to_dict() for j in jobs]
+        jobs, stats, warnings = await aggregate.run(q, chosen, on_update)
+        await on_update(stats)
+        state["warnings"] = warnings
+        if not jobs:
+            errs = [st["message"] for st in stats.values() if st["status"] == "error" and st["message"]]
+            if errs and all(st["status"] == "error" for st in stats.values()):
+                state.update(status="error", error="No source could be reached. " + " | ".join(errs))
+                return
+            state["jobs"] = []
+        else:
+            state["jobs"] = [j.to_dict() for j in jobs]
         state["status"] = "done"
-    except linkedin.LinkedInError as e:
-        state.update(status="error", error=str(e))
     except Exception:
         log.exception("search failed")
         state.update(status="error", error="Unexpected error while fetching jobs. Please try again.")
@@ -156,17 +209,55 @@ async def start_search(req: SearchRequest):
         hours: Optional[int] = req.custom_hours
     else:
         hours = TIME_RANGES[req.time_range]
-    _gc(SEARCHES, config.MAX_STORED_SEARCHES)
-    sid = uuid.uuid4().hex
-    SEARCHES[sid] = {
-        "status": "running", "stage": "searching", "done": 0, "total": req.count, "jobs": [],
-        "error": None, "created": time.time(),
-        "query": {**req.model_dump(), "title": req.title.strip(), "location": req.location.strip(), "hours": hours},
-    }
+    unknown = [x for x in req.sources if x not in src.BY_ID]
+    if unknown:
+        raise HTTPException(422, f"Unknown source(s): {', '.join(unknown)}")
+    if "urls" in req.sources and not any(u.strip() for u in req.urls):
+        raise HTTPException(422, "Paste at least one job URL, or untick “Job URLs”.")
+    for kind in ("greenhouse", "lever", "ashby"):
+        if kind in req.sources and not any(x.strip() for x in req.companies.get(kind, [])):
+            raise HTTPException(422, f"Add at least one company for {src.BY_ID[kind].name}, or untick it.")
+    if "adzuna" in req.sources and not (req.adzuna and req.adzuna.get("app_id") and req.adzuna.get("app_key")):
+        raise HTTPException(422, "Adzuna needs an App ID and App Key (free at developer.adzuna.com), or untick it.")
+    query = {**req.model_dump(exclude={"adzuna"}), "title": req.title.strip(), "location": req.location.strip(), "hours": hours}
+    sid = _new_search(query)
     task = asyncio.create_task(_run_search(sid, req, hours))
     _TASKS.add(task)
     task.add_done_callback(_TASKS.discard)
     return {"search_id": sid}
+
+
+def _finish_static(title: str, jobs: list[Job], kind: str, warnings: list[str] | None = None) -> str:
+    query = {"title": title, "location": "", "count": len(jobs), "time_range": "any", "hours": None, "experience": [],
+             "job_types": [], "workplace": [], "sort": "relevant", "sources": [kind]}
+    sid = _new_search(query, status="done")
+    SEARCHES[sid].update(jobs=[j.to_dict() for j in jobs], warnings=warnings or [],
+                         sources=[{"id": kind, "name": "Pasted jobs" if kind == "manual" else "Sample jobs",
+                                   "status": "done", "fetched": len(jobs), "kept": len(jobs), "selected": len(jobs),
+                                   "message": ""}])
+    return sid
+
+
+@app.post("/api/search/manual")
+async def manual_search(body: ManualSearch):
+    jobs = [Job(id=f"manual-{i}", title=j.title.strip(), company=j.company.strip(), location=j.location.strip(),
+                url=j.url.strip(), description=j.description.strip(), source="manual")
+            for i, j in enumerate(body.jobs, 1)]
+    return {"search_id": _finish_static(body.title.strip() or "Pasted jobs", jobs, "manual")}
+
+
+@app.post("/api/search/sample")
+async def sample_search(body: SampleSearch):
+    jobs = sample_jobs()
+    core = aggregate.core_tokens(body.title)
+    rel = sorted(((aggregate.relevance(j, core), j) for j in jobs), key=lambda x: -x[0])
+    picked = [j for r, j in rel if r >= 0.5]
+    warn = []
+    if len(picked) < 4:
+        picked = [j for _, j in rel]
+        warn = ["Few sample jobs match that title, so all sample jobs are shown."] if body.title.strip() else []
+    return {"search_id": _finish_static(f"Sample jobs{' · ' + body.title.strip() if body.title.strip() else ''}",
+                                        picked, "sample", warn)}
 
 
 @app.get("/api/search/{sid}")
@@ -174,17 +265,79 @@ async def get_search(sid: str):
     s = SEARCHES.get(sid)
     if not s:
         raise HTTPException(404, "Search expired or not found. Please search again.")
-    out = {k: s[k] for k in ("status", "stage", "done", "total", "error", "query")}
+    out = {k: s.get(k) for k in ("status", "stage", "done", "total", "error", "query", "warnings", "sources", "linkedin")}
     if s["status"] == "done":
         out["jobs"] = [{k: v for k, v in j.items() if k != "description"} | {"description_chars": len(j["description"])}
                        for j in s["jobs"]]
     return out
 
 
+# ---------- diagnostics & resume preview ----------
+async def _reach(client: httpx.AsyncClient, url: str) -> dict:
+    try:
+        r = await client.get(url)
+        return {"ok": True, "message": f"Reachable (HTTP {r.status_code})."}
+    except (httpx.ProxyError, httpx.ConnectError, httpx.ConnectTimeout) as e:
+        host = httpx.URL(url).host
+        return {"ok": False, "message": f"Blocked: can't connect to {host} ({type(e).__name__}). A firewall, proxy or "
+                                        f"sandbox network policy is blocking it; allow {host} or run the app locally."}
+    except httpx.HTTPError as e:
+        return {"ok": False, "message": f"Network error ({type(e).__name__})."}
+
+
+@app.get("/api/diagnose")
+async def diagnose(request: Request):
+    checks: dict[str, dict] = {}
+    async with httpx.AsyncClient(timeout=8, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0"}) as c:
+        async def li():
+            checks["linkedin"] = {"name": "LinkedIn", **(await linkedin.probe())}
+
+        async def host(s):
+            checks[s.id] = {"name": s.name, **(await _reach(c, f"https://{s.host}/"))}
+
+        async def ai_host(name, url):
+            checks[name] = {"name": name, **(await _reach(c, url))}
+
+        tasks = [li()] + [host(s) for s in src.ALL if s.host and s.id != "linkedin"]
+        tasks += [ai_host("OpenAI API", config.OPENAI_BASE_URL.rstrip("/") + "/models"),
+                  ai_host("Anthropic API", "https://api.anthropic.com/v1/models")]
+        await asyncio.gather(*tasks)
+    cfg = llm.resolve(request.headers)
+    ai = await llm.verify(cfg) if cfg else {"ok": False, "message": "No AI key configured."}
+    return {"api": {"ok": True, "message": "API server is running."}, "checks": checks, "ai_key": ai}
+
+
+@app.post("/api/resume/preview")
+async def resume_preview(resume_file: Optional[UploadFile] = File(None, alias="resume"),
+                         resume_text: Optional[str] = Form(None)):
+    if resume_file is not None and resume_file.filename:
+        data = await resume_file.read(config.MAX_PDF_BYTES + 1)
+        try:
+            text = await run_in_threadpool(resume.extract_text, data)
+        except resume.ResumeError as e:
+            raise HTTPException(422, str(e))
+    elif resume_text and len(resume_text.strip()) >= 100:
+        text = resume_text.strip()[:40000]
+    else:
+        raise HTTPException(422, "Upload a PDF or paste at least 100 characters of resume text.")
+    found = sorted(skills.extract_skills(text))
+    return {"chars": len(text), "words": len(text.split()), "years": resume.estimate_years(text),
+            "skills": found, "education": matcher.education_level(text), "headline": text.strip().splitlines()[0][:120]}
+
+
 # ---------- analysis ----------
 def _compute(a: dict, extra: list[str], threshold: int) -> dict:
     profile = matcher.ResumeProfile.build(a["resume_text"], a["years"], set(extra))
-    results = [matcher.score_job(j, profile) for j in a["jobs_full"]]
+    if "idf" not in a:  # corpus statistics for semantic similarity: these postings + the resume
+        a["idf"] = matcher.corpus_idf([j.get("description") or "" for j in a["jobs_full"]] + [a["resume_text"]])
+    results = [matcher.score_job(j, profile, a["idf"]) for j in a["jobs_full"]]
+    for r in results:  # blend in any deep AI verification already done for this job
+        d = a.get("deep", {}).get(r["id"])
+        r["score_det"] = r["score"]
+        if d:
+            d = {**d, "det_score": r["score"], "final_score": deepmatch.blend(r["score"], d["ai_score"])}
+            r["deep"] = d
+            r["score"] = d["final_score"]
     results.sort(key=lambda r: -r["score"])
     return {"summary": matcher.aggregate(results, profile, threshold), "jobs": results}
 
@@ -323,6 +476,25 @@ async def tool(aid: str, body: ToolRequest, request: Request):
     prompt = assistant.TOOLS[body.kind]
     return await _stream_response(cfg, assistant.system_for(_full_ctx(a), job, a["extra"]),
                                   [{"role": "user", "content": prompt}])
+
+
+@app.post("/api/analysis/{aid}/deep/{job_id}")
+async def deep_check(aid: str, job_id: str, request: Request):
+    a = _analysis(aid)
+    cfg = llm.require(request.headers)
+    job = _job(a, job_id)
+    a.setdefault("deep", {})
+    if len(a["deep"]) >= 60 and job_id not in a["deep"]:
+        raise HTTPException(429, "Deep AI check limit reached for this analysis (60 jobs).")
+    scored = next((r for r in a["result"]["jobs"] if r["id"] == job_id), None)
+    if scored is None:
+        raise HTTPException(404, "Job not found in this analysis.")
+    det = scored.get("score_det", scored["score"])
+    out = await deepmatch.assess(cfg, job, {**scored, "score": det}, a["resume_text"])
+    a["deep"][job_id] = out
+    computed = await run_in_threadpool(_compute, a, a["extra"], a["result"]["summary"]["threshold"])
+    a["result"].update(computed)
+    return {"deep": out, "summary": computed["summary"], "jobs": computed["jobs"]}
 
 
 # ---------- frontend ----------

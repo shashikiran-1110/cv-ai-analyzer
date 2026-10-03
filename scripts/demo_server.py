@@ -1,71 +1,228 @@
-"""Demo server: the real app, but LinkedIn and the OpenAI API are faked locally.
+"""Demo server: the real app with every external service faked locally (no network needed).
 
-Lets you try the whole UI offline / without LinkedIn access or a paid key:
     python scripts/demo_server.py [port]        # default 8765
-In AI settings use provider OpenAI, key `sk-good`, model `gpt-5.6-luna` (any other key/model is rejected,
-which demonstrates the verification errors). Jobs and AI replies are canned sample data.
+
+- Job portals (LinkedIn, Remotive, RemoteOK, Arbeitnow, Jobicy, Himalayas, The Muse, Greenhouse, Lever, Ashby,
+  Adzuna) answer with canned data in each API's real response format, so the full ingestion pipeline
+  (filters, dedupe, ranking) runs for real. Wellfound URLs return 403, like the real site usually does.
+- AI settings: provider OpenAI, key `sk-good`, model `gpt-5.6-luna` (anything else is rejected).
+  The fake model deliberately returns one fabricated evidence quote in deep checks so you can see the
+  server-side verification downgrade it.
+- Adzuna: App ID `demo`, any App Key.
 """
-import asyncio, json, sys
+import asyncio
+import json
+import re
+import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
-from fastapi import Request
-from fastapi.responses import JSONResponse, StreamingResponse
-from app import config, linkedin, main
+
+import httpx  # noqa: E402
+from fastapi import Request  # noqa: E402
+from fastapi.responses import JSONResponse, StreamingResponse  # noqa: E402
+
+from app import config, linkedin, main  # noqa: E402
+from app.jobmodel import Job  # noqa: E402
+from app.sources import aggregate  # noqa: E402
+from app.sources.sample import sample_jobs  # noqa: E402
 
 config.OPENAI_BASE_URL = f"http://127.0.0.1:{PORT}/fake-openai/v1"
-D = "Requirements\n- {y}+ years of experience\n- {s}\n" + "Nice to have\n- Kubernetes\n- Terraform\n" + "Join our team and grow. " * 8
-JOBS = [
- ("Senior Data Engineer","Acme","Python, SQL, AWS and Airflow",5),
- ("Data Engineer","Globex","Python, Spark, Kafka and Snowflake",3),
- ("Machine Learning Engineer","Initech","Python, PyTorch, TensorFlow and MLOps, Docker",4),
- ("Analytics Engineer","Hooli","SQL, dbt, Looker and BigQuery",3),
- ("Backend Engineer","Umbrella","Java, Spring, Kubernetes, Kafka and PostgreSQL",5),
- ("Platform Engineer","Stark","Kubernetes, Terraform, AWS, Go and Prometheus",6),
- ("Frontend Developer <img src=x onerror=alert(1)>","Wayne","React, TypeScript, CSS and GraphQL",3),
-]
-async def fake(title, location, count, hours=None, on_progress=None, client=None, **kw):
-    print("search:", title, location, count, hours, kw, flush=True)
-    out=[]
-    for i in range(count):
-        t,c,s,y = JOBS[i % len(JOBS)]
-        await on_progress("searching", i+1, count); await asyncio.sleep(0.04)
-        out.append(linkedin.Job(id=str(1000+i), title=t, company=f"{c} {i}", location="London", url=f"https://www.linkedin.com/jobs/view/{1000+i}",
-            posted="2026-10-01", seniority="Mid-Senior level", description=D.format(y=y, s=s) if i % 9 != 8 else ""))
-    for i in range(count):
-        await on_progress("details", i+1, count); await asyncio.sleep(0.02)
-    return out
-linkedin.search_jobs = fake
+NOW = datetime.now(timezone.utc)
+SAMPLES = sample_jobs()
 
+
+def iso(hours_ago: float) -> str:
+    return (NOW - timedelta(hours=hours_ago)).isoformat()
+
+
+def html(desc: str) -> str:
+    out = []
+    for line in desc.splitlines():
+        line = line.strip()
+        if line.startswith("•"):
+            out.append(f"<li>{line[1:].strip()}</li>")
+        elif line:
+            out.append(f"<p>{line}</p>")
+    return "".join(out)
+
+
+def pick(i: int):
+    return SAMPLES[i % len(SAMPLES)]
+
+
+# ---------- fake LinkedIn ----------
+async def fake_linkedin(title, location, count, hours=None, on_progress=None, client=None, **kw):
+    print("linkedin search:", title, location, count, hours, {k: v for k, v in kw.items() if k != "warnings"}, flush=True)
+    out = []
+    for i in range(count):
+        s = pick(i)
+        if on_progress:
+            await on_progress("searching", i + 1, count)
+        await asyncio.sleep(0.03)
+        out.append(Job(id=str(4000 + i), title=s.title, company=f"{s.company} (LI {i})", location=s.location,
+                       url=f"https://www.linkedin.com/jobs/view/{4000 + i}", posted=iso(i), seniority="Mid-Senior level",
+                       description=s.description if i % 9 != 8 else "", employment_type=s.employment_type))
+    for i in range(count):
+        if on_progress:
+            await on_progress("details", i + 1, count)
+        await asyncio.sleep(0.01)
+    return out
+
+
+async def fake_probe(client=None):
+    return {"ok": True, "message": "LinkedIn is reachable (demo)."}
+
+linkedin.search_jobs = fake_linkedin
+linkedin.probe = fake_probe
+
+
+# ---------- fake portal APIs (real response shapes) ----------
+def portal(request: httpx.Request) -> httpx.Response:
+    h, path, p = request.url.host, request.url.path, request.url.params
+    if h == "remotive.com":
+        return httpx.Response(200, json={"jobs": [{"id": 100 + i, "url": f"https://remotive.com/j/{i}", "title": s.title,
+            "company_name": s.company + " Remote", "candidate_required_location": "Worldwide", "publication_date": iso(5 + i)[:19],
+            "description": html(s.description), "job_type": "full_time", "tags": []} for i, s in enumerate(SAMPLES)]})
+    if h == "remoteok.com":
+        return httpx.Response(200, json=[{"legal": "demo"}] + [{"id": str(200 + i), "position": s.title, "company": s.company,
+            "location": "Remote", "date": iso(10 + i), "description": html(s.description), "tags": [],
+            "url": f"https://remoteok.com/remote-jobs/{200 + i}"} for i, s in enumerate(SAMPLES[:8])])
+    if h == "www.arbeitnow.com":
+        return httpx.Response(200, json={"data": [{"slug": f"an-{i}", "company_name": s.company + " GmbH", "title": s.title,
+            "description": html(s.description), "remote": i % 2 == 0, "url": f"https://arbeitnow.com/{i}", "tags": [],
+            "job_types": ["full time"], "location": "Berlin" if i % 2 else "London", "created_at": int((NOW - timedelta(hours=20)).timestamp())}
+            for i, s in enumerate(SAMPLES)], "links": {"next": None}})
+    if h == "jobicy.com":
+        return httpx.Response(200, json={"jobs": [{"id": 300 + i, "url": f"https://jobicy.com/{i}", "jobTitle": s.title,
+            "companyName": s.company + " Labs", "jobGeo": "Europe", "jobType": ["full-time"], "pubDate": iso(30)[:19].replace("T", " "),
+            "jobDescription": html(s.description), "jobLevel": "Mid"} for i, s in enumerate(SAMPLES[:6])]})
+    if h == "himalayas.app":
+        return httpx.Response(200, json={"jobs": [{"title": s.title, "companyName": s.company + " Co", "locationRestrictions": ["United Kingdom"],
+            "description": html(s.description), "pubDate": int((NOW - timedelta(hours=40)).timestamp()), "applicationLink": f"https://himalayas.app/j/{i}",
+            "guid": f"g{i}", "employmentType": "Full Time", "seniority": ["Mid-level"], "categories": []} for i, s in enumerate(SAMPLES[:6])]})
+    if h == "www.themuse.com":
+        page = int(p.get("page", 0))
+        rows = [] if page > 0 else [{"id": 500 + i, "name": s.title, "contents": html(s.description), "publication_date": iso(50),
+            "locations": [{"name": "London, United Kingdom"}], "levels": [{"name": "Mid Level"}], "company": {"name": s.company + " Group"},
+            "refs": {"landing_page": f"https://themuse.com/j/{i}"}} for i, s in enumerate(SAMPLES[:6])]
+        return httpx.Response(200, json={"results": rows, "page_count": 1})
+    if h == "boards-api.greenhouse.io":
+        slug = path.split("/")[3]
+        return httpx.Response(200, json={"jobs": [{"id": 600 + i, "title": s.title, "location": {"name": "London"},
+            "absolute_url": f"https://boards.greenhouse.io/{slug}/jobs/{600 + i}", "updated_at": iso(12),
+            "content": html(s.description).replace("<", "&lt;").replace(">", "&gt;")} for i, s in enumerate(SAMPLES[:5])]})
+    if h == "api.lever.co":
+        slug = path.split("/")[3]
+        if slug == "missing":
+            return httpx.Response(404)
+        return httpx.Response(200, json=[{"id": f"lv{i}", "text": s.title, "categories": {"location": "London", "commitment": "Full-time"},
+            "descriptionPlain": s.description, "lists": [], "hostedUrl": f"https://jobs.lever.co/{slug}/lv{i}",
+            "createdAt": int((NOW - timedelta(hours=8)).timestamp() * 1000), "workplaceType": "hybrid"} for i, s in enumerate(SAMPLES[:5])])
+    if h == "api.ashbyhq.com":
+        return httpx.Response(200, json={"jobs": [{"id": f"as{i}", "title": s.title, "location": "Remote - UK", "isRemote": True,
+            "descriptionPlain": s.description, "publishedAt": iso(15), "jobUrl": f"https://jobs.ashbyhq.com/x/as{i}",
+            "employmentType": "FullTime"} for i, s in enumerate(SAMPLES[:5])]})
+    if h == "api.adzuna.com":
+        if p.get("app_id") != "demo":
+            return httpx.Response(401, json={"exception": "AUTH_FAIL"})
+        return httpx.Response(200, json={"results": [{"id": f"az{i}", "title": s.title, "description": s.description[:480] + "…",
+            "company": {"display_name": s.company + " Ltd"}, "location": {"display_name": "London, UK"}, "created": iso(3),
+            "redirect_url": f"https://adzuna.example/{i}", "contract_time": "full_time"} for i, s in enumerate(SAMPLES[:8])]})
+    if h.endswith("wellfound.com"):
+        return httpx.Response(403, text="<html>Please verify you are a human</html>")
+    # any other URL: a career page with schema.org JobPosting
+    s = SAMPLES[0]
+    ld = {"@context": "https://schema.org", "@type": "JobPosting", "title": s.title, "description": html(s.description),
+          "hiringOrganization": {"@type": "Organization", "name": "Career Page Co"}, "datePosted": NOW.date().isoformat(),
+          "jobLocation": {"address": {"addressLocality": "London", "addressCountry": "GB"}}}
+    return httpx.Response(200, text=f'<html><head><script type="application/ld+json">{json.dumps(ld)}</script></head><body></body></html>')
+
+
+_real_client = httpx.AsyncClient
+
+
+class _HttpxProxy:
+    """Stands in for the httpx module inside one app module only, routing its clients to a mock transport."""
+    def __init__(self, handler):
+        self._handler = handler
+
+    def __getattr__(self, name):
+        return getattr(httpx, name)
+
+    def AsyncClient(self, **kw):
+        kw.pop("transport", None)
+        return _real_client(transport=httpx.MockTransport(self._handler), **kw)
+
+
+aggregate.httpx = _HttpxProxy(portal)                                          # source aggregator
+main.httpx = _HttpxProxy(lambda r: httpx.Response(200, text="ok"))            # connection check
+
+
+# ---------- fake OpenAI ----------
 @main.app.get("/fake-openai/v1/models/{model}")
 async def fm(model: str, request: Request):
     key = request.headers.get("authorization", "")
-    if key != "Bearer sk-good": return JSONResponse({"error": {"message": f"Incorrect API key provided: {key[7:]}"}}, 401)
-    if model != "gpt-5.6-luna": return JSONResponse({"error": {"message": f"The model `{model}` does not exist"}}, 404)
+    if key != "Bearer sk-good":
+        return JSONResponse({"error": {"message": f"Incorrect API key provided: {key[7:]}"}}, 401)
+    if model != "gpt-5.6-luna":
+        return JSONResponse({"error": {"message": f"The model `{model}` does not exist"}}, 404)
     return {"id": model}
+
+
+def _deep_answer(prompt: str) -> dict:
+    resume = prompt.split("<resume>", 1)[-1].split("</resume>", 1)[0]
+    lines = [l.strip() for l in resume.splitlines() if len(l.split()) >= 6]
+    quote = " ".join(lines[0].split()[:10]) if lines else ""
+    job = prompt.split("<job>", 1)[-1].split("</job>", 1)[0]
+    reqs = [re.sub(r"^[•\-\s]+", "", l).strip() for l in job.splitlines() if l.strip().startswith(("•", "-"))][:5] or ["Relevant experience"]
+    out = []
+    for i, r in enumerate(reqs):
+        if i == 0:
+            out.append({"requirement": r, "importance": "must", "status": "met", "evidence": quote, "note": "Directly shown."})
+        elif i == 1:
+            out.append({"requirement": r, "importance": "must", "status": "met",
+                        "evidence": "Led a global team of 40 engineers across five continents", "note": "(demo: fabricated quote)"})
+        elif i == 2:
+            out.append({"requirement": r, "importance": "nice", "status": "partial", "evidence": quote, "note": "Adjacent experience."})
+        else:
+            out.append({"requirement": r, "importance": "must", "status": "missing", "evidence": "", "note": "Not shown on the resume."})
+    return {"verdict": "possible", "summary": "Demo assessment: solid core overlap; one claim could not be verified.", "requirements": out}
+
 
 @main.app.post("/fake-openai/v1/chat/completions")
 async def fc(request: Request):
     body = await request.json()
-    if request.headers.get("authorization") != "Bearer sk-good": return JSONResponse({"error": {"message": "bad key"}}, 401)
+    if request.headers.get("authorization") != "Bearer sk-good":
+        return JSONResponse({"error": {"message": "bad key"}}, 401)
+    user = body["messages"][-1]["content"]
     if body.get("stream"):
-        user = body["messages"][-1]["content"]
         reply = f"## Reply\n\nYou asked: **{user[:60]}**\n\n- Point one\n- Point two\n\n<script>alert('xss')</script>"
+
         async def gen():
             for i in range(0, len(reply), 12):
-                yield "data: " + json.dumps({"choices":[{"delta":{"content": reply[i:i+12]}}]}) + "\n\n"
+                yield "data: " + json.dumps({"choices": [{"delta": {"content": reply[i:i + 12]}}]}) + "\n\n"
                 await asyncio.sleep(0.02)
             yield "data: [DONE]\n\n"
         return StreamingResponse(gen(), media_type="text/event-stream")
-    out = {"summary":"AI: strong data-engineering profile; main gap is container orchestration.",
-           "strengths":["AI strength: solid Python/SQL/AWS match"],"improvements":["AI: quantify pipeline impact"],
-           "skills_to_learn":[{"skill":"Kubernetes","why":"Asked in most postings.","how":"Deploy a small app on kind."}]}
-    return {"choices":[{"message":{"content": json.dumps(out)}}]}
+    if "requirement by requirement" in user:
+        await asyncio.sleep(0.3)
+        return {"choices": [{"message": {"content": json.dumps(_deep_answer(user))}}]}
+    out = {"summary": "AI: strong data-engineering profile; main gap is container orchestration.",
+           "strengths": ["AI strength: solid Python/SQL/AWS match"], "improvements": ["AI: quantify pipeline impact"],
+           "skills_to_learn": [{"skill": "Kubernetes", "why": "Asked in most postings.", "how": "Deploy a small app on kind."}]}
+    return {"choices": [{"message": {"content": json.dumps(out)}}]}
+
 
 rs = main.app.router.routes
 fake_routes = [r for r in rs if getattr(r, "path", "").startswith("/fake-openai")]
-for r in fake_routes: rs.remove(r)
+for r in fake_routes:
+    rs.remove(r)
 rs[:0] = fake_routes
-import uvicorn
-print(f"Demo server (fake LinkedIn + fake OpenAI) at http://localhost:{PORT}", flush=True)
-uvicorn.run(main.app, host="127.0.0.1", port=PORT, log_level="warning")
+
+if __name__ == "__main__":
+    import uvicorn
+    print(f"Demo server (all external services faked) at http://localhost:{PORT}", flush=True)
+    uvicorn.run(main.app, host="127.0.0.1", port=PORT, log_level="warning")

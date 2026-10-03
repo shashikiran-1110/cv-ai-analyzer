@@ -1,58 +1,76 @@
 # CV Match Analyzer
 
-Search real LinkedIn postings (title, location, count, time range, experience level, job type, workplace), upload or paste your resume, and see:
+Upload your CV, describe the role (title, location, number of posts, time range, filters), and the app collects
+real postings from **LinkedIn, public job boards, company career sites and job URLs**, scores your resume against
+**every requirement** of every posting, and tells you:
 
-- how many of those jobs you'd **qualify** for (% and count, adjustable threshold),
-- a **per-job match score** (skills 60% · role fit 25% · experience 15%) with matched / missing skills,
-- your **strengths**, **areas to improve** and a ranked list of **skills to work on**,
-- a **what-if** simulator: add skills you have or plan to learn and instantly see how many more jobs you'd unlock,
-- an **AI assistant** (OpenAI or Anthropic, your own key): streaming chat about your resume and the jobs, plus per-job cover letter, resume tailoring, interview prep and a 30-day gap plan.
+- how many jobs you **qualify** for (count and %, adjustable threshold),
+- a per-job, explainable score with a **requirement checklist**, blockers (degree, years) and missing skills,
+- **strengths**, **areas to improve** and ranked **skills to work on**, plus a what-if simulator,
+- optional **deep AI verification** (OpenAI or Anthropic, your key): requirement-by-requirement with resume quotes
+  that the server checks, so the AI can't invent qualifications,
+- an AI assistant: streaming chat, cover letters, tailored resume bullets, interview prep, 30-day gap plans.
+
+The design is in [`docs/PLAN.md`](docs/PLAN.md).
 
 ## Run
 
 ```bash
-./run.sh            # installs deps, builds the React UI, serves http://localhost:8000
+./run.sh            # installs deps, builds the UI, serves http://localhost:8000
 ```
 
-No LinkedIn access or API key handy? Try the full UI with canned data:
+Try everything offline with every external service faked (job portals, Wellfound, OpenAI):
 
 ```bash
-python scripts/demo_server.py     # http://localhost:8765  (AI settings: OpenAI, key `sk-good`)
+python scripts/demo_server.py     # http://localhost:8765 · AI key `sk-good` · Adzuna App ID `demo`
 ```
 
-Development: `uvicorn app.main:app --reload` plus `cd frontend && npm run dev` (http://localhost:5173, proxies `/api`).
+Development: `uvicorn app.main:app --reload` and `cd frontend && npm run dev` (http://localhost:5173, proxies `/api`).
 
-## AI keys
+## Job sources
 
-Click **AI settings** (top right), choose OpenAI or Anthropic, paste your key and press **Verify & save**. Verification only reads the model's metadata, so it is instant, free, and tells a bad key apart from a bad model name (default model `gpt-5.6-luna`, editable).
+| Source | How | Notes |
+|---|---|---|
+| LinkedIn | public guest job pages | largest volume; may rate-limit or ask for sign-in (detected and reported) |
+| Remotive, RemoteOK, Jobicy, Himalayas | official public APIs | remote jobs |
+| Arbeitnow | official public API | Europe (mostly Germany) + remote |
+| The Muse | official public API | US-heavy, curated companies |
+| Greenhouse, Lever, Ashby | companies' official job-board APIs | enter company slugs (e.g. `stripe`) |
+| Adzuna | official aggregator API, free key | thousands of boards, 19 countries; shortened descriptions |
+| Job URLs | the page's schema.org `JobPosting` data | Wellfound, company career pages, Workday, LinkedIn links… |
+| Paste jobs / Sample jobs | | always work, even with no network |
 
-- The key lives in your browser (`sessionStorage`, or `localStorage` if you tick "remember") and is sent only as headers on AI requests. The server never stores or logs it and scrubs it from error messages.
-- Alternatively set `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` on the server (see `.env.example`).
-- Scores are always computed locally and deterministically; AI only writes advice, chat and documents.
-- Resume text is sent to your chosen provider only when you use an AI feature.
+**Wellfound** has no public API and blocks automated clients, so it isn't searched in bulk. Paste Wellfound job
+links under *Job URLs* (imported when Wellfound allows it; you get a clear message when it doesn't), or paste the
+posting text under *Paste jobs*.
 
-## Architecture
+Every source runs concurrently and fails independently; results are filtered (title relevance, location incl.
+remote-in-your-country, recency, workplace, job type, seniority), **deduplicated across sources**, ranked, and
+spread fairly so one source can't crowd out the rest.
 
-| Piece | Where |
-|---|---|
-| FastAPI app, analysis sessions, SSE streaming | `app/main.py` |
-| LinkedIn public guest-endpoint scraper (paging, filters, retries, progress) | `app/linkedin.py` |
-| OpenAI/Anthropic client: verify, complete, stream | `app/llm.py` |
-| Assistant prompts and context | `app/assistant.py`, `app/insights.py` |
-| PDF text + experience-years extraction | `app/resume.py` |
-| Skill taxonomy and scoring | `app/skills.py`, `app/matcher.py` |
-| React + TypeScript + Vite UI | `frontend/` |
+## Matching (deterministic, explainable)
 
-## Notes & limits
+`score = 40% skills + 20% requirements + 15% role fit + 15% experience + 10% semantic similarity`, minus small
+penalties for hard blockers. Requirement lines are extracted section-aware ("Requirements", "Nice to have",
+skipping benefits/company blurb) and each is marked met / partial / missing. Skills come from a ~220-skill
+taxonomy with false-positive guards ("the rest of the team" ≠ REST, "excel in" ≠ Excel). Deep AI checks blend
+50/50 with the rules score; unverifiable AI claims are downgraded.
 
-- LinkedIn data comes from its **unauthenticated public job pages**. LinkedIn may rate-limit, block datacenter IPs, or change its markup, and its terms restrict automated access. Keep volumes small and personal. Errors are surfaced in the UI.
-- Postings without a loadable description are flagged and their score is capped.
-- Scoring is a skill/keyword heuristic, not a hiring decision. Scanned (image-only) PDFs aren't supported (no OCR); paste text instead.
-- Searches and analyses are held in memory for 1 hour; resumes are never written to disk.
+## "Request failed"? Use **Connection check**
+
+The header's *Connection check* shows, per source and AI provider, whether the **server** can reach it. Sandboxes,
+corporate proxies and firewalls commonly block `www.linkedin.com` or `api.openai.com`; allow those domains or run
+the app on your own computer. Sources that work still return results, and *Paste jobs* always works.
+
+## Privacy
+
+AI and Adzuna keys stay in your browser and are sent only with the requests that need them; the server never
+stores or logs them and redacts them from errors. Resumes are processed in memory (1-hour sessions), never written
+to disk, and sent to your AI provider only when you use AI features.
 
 ## Tests
 
 ```bash
-python -m pytest            # backend
-cd frontend && npm run build   # typecheck + production build
+python -m pytest              # 75 backend tests (sources, matcher, AI verification, API)
+cd frontend && npm run build  # typecheck + production build
 ```

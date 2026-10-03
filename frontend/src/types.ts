@@ -2,32 +2,51 @@ export type Provider = "openai" | "anthropic";
 
 export interface SearchQuery {
   title: string; location: string; count: number; time_range: string; hours: number | null;
-  experience: string[]; job_types: string[]; workplace: string[]; sort: string;
+  experience: string[]; job_types: string[]; workplace: string[]; sort: string; sources?: string[];
 }
 export interface SearchParams {
   title: string; location: string; count: number; time_range: string; custom_hours?: number;
-  experience: string[]; job_types: string[]; workplace: string[]; sort: string;
+  experience: string[]; job_types: string[]; workplace: string[]; sort: string; strict: boolean;
+}
+export interface SourceInfo { id: string; name: string; kind: string; remote_only: boolean; needs: string; note: string; host: string }
+export interface SourceStat {
+  id: string; name: string; status: "running" | "done" | "error"; fetched: number; kept: number; selected?: number;
+  message: string; kind?: string; progress?: { stage: string; done: number; total: number } | null;
 }
 export interface JobSummary {
   id: string; title: string; company: string; location: string; url: string; posted: string;
   seniority: string; employment_type: string; description_missing: boolean; description_chars: number;
+  source: string; sources: string[]; remote: boolean | null; salary: string;
 }
 export interface SearchStatus {
-  status: "running" | "done" | "error"; stage: "searching" | "details"; done: number; total: number;
-  error: string | null; query: SearchQuery; jobs?: JobSummary[];
+  status: "running" | "done" | "error"; stage: string; done: number; total: number;
+  error: string | null; query: SearchQuery; jobs?: JobSummary[]; warnings?: string[]; sources?: SourceStat[];
+  linkedin?: { stage: string; done: number; total: number } | null;
+}
+export interface ReqCheck { text: string; preferred: boolean; coverage: number; missing: string[]; status: "met" | "partial" | "missing" }
+export interface DeepReq {
+  requirement: string; importance: "must" | "nice"; status: "met" | "partial" | "missing";
+  evidence: string; claimed_evidence: string; verified: boolean; note: string; flag: string;
+}
+export interface DeepResult {
+  job_id: string; ai_score: number; det_score: number; final_score: number; verdict: string; summary: string;
+  requirements: DeepReq[]; unverified_claims: number; provider: string; model: string;
 }
 export interface ScoredJob {
   id: string; title: string; company: string; location: string; url: string; posted: string; score: number;
-  components: { skills: number; role: number; experience: number };
+  score_det?: number; source: string; sources: string[]; salary: string; remote: boolean | null;
+  components: { skills: number; requirements: number; role: number; experience: number; semantic: number };
   matched_skills: string[]; missing_skills: string[]; required_missing: string[];
   matched_keywords: string[]; missing_keywords: string[];
-  required_years: number | null; required_years_inferred: boolean; confidence: "high" | "low";
+  requirements: ReqCheck[]; requirements_met: number; blockers: string[]; education_required: string | null;
+  required_years: number | null; required_years_inferred: boolean; confidence: "high" | "low"; deep?: DeepResult;
 }
 export interface SkillStat { skill: string; category: string; jobs: number; pct: number }
 export interface Summary {
   job_count: number; avg_score: number; qualifying: number; threshold: number; distribution: number[];
-  resume_skills: string[]; resume_years: number; skill_gaps: SkillStat[]; skill_strengths: SkillStat[];
-  unused_skills: string[];
+  resume_skills: string[]; resume_years: number; resume_education: string | null; skill_gaps: SkillStat[];
+  skill_strengths: SkillStat[]; unused_skills: string[]; common_blockers: { text: string; jobs: number }[];
+  by_source: Record<string, number>;
 }
 export interface LearnItem { skill: string; why: string; how?: string; jobs?: number | null }
 export interface Insights {
@@ -43,3 +62,6 @@ export interface AppConfig { max_jobs: number; default_threshold: number; server
 export interface VerifyResult { ok: boolean; warning?: boolean; message: string }
 export interface SkillInfo { name: string; category: string }
 export interface ChatMsg { role: "user" | "assistant"; content: string }
+export interface ResumePreview { chars: number; words: number; years: number; skills: string[]; education: string | null; headline: string }
+export interface CheckResult { name: string; ok: boolean; message: string; kind?: string }
+export interface Diagnosis { api: CheckResult; checks: Record<string, CheckResult>; ai_key: VerifyResult }

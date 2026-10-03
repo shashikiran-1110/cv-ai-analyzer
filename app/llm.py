@@ -66,7 +66,7 @@ def _client() -> httpx.AsyncClient:  # indirection so tests can inject a MockTra
 
 
 def _redact(text: str, cfg: LLMConfig) -> str:
-    return text.replace(cfg.api_key, "***") if cfg.api_key else text
+    return text.replace(cfg.api_key, "***") if len(cfg.api_key) >= 6 else text
 
 
 def _base(cfg: LLMConfig) -> str:

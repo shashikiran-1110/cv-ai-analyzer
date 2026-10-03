@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import asyncio
 import re
-from dataclasses import dataclass, asdict, field
 from typing import Awaitable, Callable, Optional
 
 import httpx
 from bs4 import BeautifulSoup
 
 from . import config
+from .jobmodel import Job
+from .textutil import html_to_text
 
 SEARCH_URL = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
 DETAIL_URL = "https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{job_id}"
@@ -30,30 +31,30 @@ HEADERS = {
     ),
     "Accept-Language": "en-US,en;q=0.9",
     "Accept": "text/html,application/xhtml+xml",
+    "Referer": "https://www.linkedin.com/jobs/search",
 }
 
 
+def _is_authwall(r: httpx.Response) -> bool:
+    url = str(r.url)
+    if "authwall" in url or "/login" in url or "/checkpoint" in url:
+        return True
+    head = r.text[:4000].lower()
+    return "session_key" in head and "base-card" not in head
+
+
 class LinkedInError(Exception):
-    """User-presentable failure while talking to LinkedIn."""
+    """User-presentable failure while talking to LinkedIn. `kind`: network | rate_limit | blocked | http."""
+
+    def __init__(self, message: str, kind: str = "http"):
+        super().__init__(message)
+        self.kind = kind
 
 
-@dataclass
-class Job:
-    id: str
-    title: str
-    company: str = ""
-    location: str = ""
-    url: str = ""
-    posted: str = ""
-    description: str = ""
-    seniority: str = ""
-    employment_type: str = ""
-    extra: dict = field(default_factory=dict)
-
-    def to_dict(self) -> dict:
-        d = asdict(self)
-        d["description_missing"] = len(self.description) < 80
-        return d
+NETWORK_HELP = (
+    "Can't connect to linkedin.com from the server ({why}). A firewall, proxy or sandbox network policy is "
+    "blocking it. Allow www.linkedin.com, run the app on your own computer, or use “Paste jobs” instead."
+)
 
 
 ProgressCb = Callable[[str, int, int], Awaitable[None]]
@@ -103,15 +104,7 @@ def parse_search_page(html: str) -> list[Job]:
 def parse_detail(html: str) -> dict:
     soup = BeautifulSoup(html, "html.parser")
     desc_el = soup.select_one(".show-more-less-html__markup, .description__text")
-    description = ""
-    if desc_el:
-        for br in desc_el.find_all("br"):
-            br.replace_with("\n")
-        for li in desc_el.find_all("li"):
-            li.insert_before("\n• ")
-        for blk in desc_el.find_all(["p", "div", "ul", "h1", "h2", "h3", "h4", "strong"]):
-            blk.insert_after("\n")
-        description = re.sub(r"\n\s*\n+", "\n", desc_el.get_text()).strip()
+    description = html_to_text(desc_el.decode_contents()) if desc_el else ""
     criteria: dict[str, str] = {}
     for item in soup.select("li.description__job-criteria-item"):
         key = _text(item.select_one(".description__job-criteria-subheader")).lower()
@@ -128,28 +121,59 @@ def parse_detail(html: str) -> dict:
 
 async def _get(client: httpx.AsyncClient, url: str, params: Optional[dict] = None,
                retries: int = 4) -> Optional[str]:
-    """GET with exponential backoff. Returns None on 404, raises on persistent failure."""
+    """GET with exponential backoff. Returns None on 404, raises LinkedInError on persistent failure."""
     delay = 1.5
-    last = "unknown error"
+    last, kind = "unknown error", "http"
     for attempt in range(retries):
         try:
             r = await client.get(url, params=params)
+        except (httpx.ProxyError, httpx.ConnectError, httpx.ConnectTimeout) as e:
+            # connection-level failures don't get better by retrying quickly
+            raise LinkedInError(NETWORK_HELP.format(why=type(e).__name__), "network")
         except httpx.HTTPError as e:
-            last = f"network error ({type(e).__name__})"
+            last, kind = f"network error ({type(e).__name__})", "network"
         else:
             if r.status_code == 200:
+                if _is_authwall(r):
+                    raise LinkedInError(
+                        "LinkedIn redirected to its sign-in page, so it's blocking anonymous job search from this "
+                        "network right now. Wait a while, try another network, or use “Paste jobs”.", "blocked")
                 return r.text
             if r.status_code == 404:
                 return None
             last = f"HTTP {r.status_code}"
+            kind = "rate_limit" if r.status_code in (429, 999) else "http"
+            if r.status_code == 429 and r.headers.get("retry-after", "").isdigit():
+                delay = min(float(r.headers["retry-after"]), 20)
             if r.status_code not in (429, 500, 502, 503, 504, 999):
                 break
         if attempt < retries - 1:
             await asyncio.sleep(delay)
             delay *= 2
-    if "429" in last or "999" in last:
-        raise LinkedInError("LinkedIn is rate-limiting requests right now. Wait a few minutes or ask for fewer jobs.")
-    raise LinkedInError(f"Could not reach LinkedIn ({last}).")
+    if kind == "rate_limit":
+        raise LinkedInError("LinkedIn is rate-limiting requests from this network. Wait a few minutes, ask for fewer "
+                            "jobs, or use “Paste jobs”.", "rate_limit")
+    if kind == "network":
+        raise LinkedInError(NETWORK_HELP.format(why=last), "network")
+    raise LinkedInError(f"LinkedIn returned an error ({last}). Try again shortly, or use “Paste jobs”.", "http")
+
+
+async def probe(client: Optional[httpx.AsyncClient] = None) -> dict:
+    """One cheap search request to tell whether LinkedIn is reachable from this server."""
+    own = client is None
+    client = client or httpx.AsyncClient(headers=HEADERS, timeout=12, follow_redirects=True)
+    try:
+        html = await _get(client, SEARCH_URL, {"keywords": "software engineer", "start": 0}, retries=1)
+        n = len(parse_search_page(html or ""))
+        if n:
+            return {"ok": True, "message": f"LinkedIn is reachable ({n} sample postings returned)."}
+        return {"ok": False, "kind": "empty", "message": "LinkedIn answered but returned no postings; it may be "
+                "throttling this network. Try again in a few minutes."}
+    except LinkedInError as e:
+        return {"ok": False, "kind": e.kind, "message": str(e)}
+    finally:
+        if own:
+            await client.aclose()
 
 
 async def search_jobs(
@@ -164,6 +188,7 @@ async def search_jobs(
     job_types: Optional[list[str]] = None,
     workplace: Optional[list[str]] = None,
     sort: str = "recent",
+    warnings: Optional[list[str]] = None,
 ) -> list[Job]:
     """Search, page through results, then fetch each job's full description."""
     count = max(1, min(count, config.MAX_JOBS))
@@ -188,7 +213,14 @@ async def search_jobs(
         start, empty_pages = 0, 0
         while len(jobs) < count and start < 1000 and empty_pages < 2:
             await progress("searching", len(jobs), count)
-            html = await _get(client, SEARCH_URL, {**params, "start": start})
+            try:
+                html = await _get(client, SEARCH_URL, {**params, "start": start})
+            except LinkedInError as e:
+                if not jobs:
+                    raise
+                if warnings is not None:  # keep what we already have instead of failing the whole search
+                    warnings.append(f"Stopped at {len(jobs)} jobs: {e}")
+                break
             page = parse_search_page(html) if html else []
             new = [j for j in page if j.id not in jobs]
             empty_pages = empty_pages + 1 if not new else 0
@@ -202,9 +234,10 @@ async def search_jobs(
 
         sem = asyncio.Semaphore(config.DETAIL_CONCURRENCY)
         done = 0
+        failed = 0
 
         async def fetch_detail(job: Job):
-            nonlocal done
+            nonlocal done, failed
             async with sem:
                 try:
                     html = await _get(client, DETAIL_URL.format(job_id=job.id), retries=3)
@@ -215,13 +248,16 @@ async def search_jobs(
                         job.employment_type = d["employment_type"]
                         job.extra = d["extra"]
                 except LinkedInError:
-                    pass  # keep the job; it is flagged description_missing
+                    failed += 1  # keep the job; it is flagged description_missing
                 done += 1
                 await progress("details", done, len(selected))
                 await asyncio.sleep(0.2)
 
         await progress("details", 0, len(selected))
         await asyncio.gather(*(fetch_detail(j) for j in selected))
+        if failed and warnings is not None:
+            warnings.append(f"{failed} of {len(selected)} job descriptions couldn't be loaded (LinkedIn throttling); "
+                            "those jobs are scored from their titles only.")
         return selected
     finally:
         if own_client:
