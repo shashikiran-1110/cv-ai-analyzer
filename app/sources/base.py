@@ -26,6 +26,8 @@ class JobQuery:
     urls: list[str] = field(default_factory=list)
     adzuna: Optional[dict] = None                                    # {"app_id", "app_key", "country"}
     strict: bool = True                                              # require the job title to match the query
+    alt_titles: list[str] = field(default_factory=list)              # Search Planner: other titles that also count
+    exclude_titles: list[str] = field(default_factory=list)          # …and titles to drop ("sales engineer")
 
 
 class SourceError(Exception):

@@ -16,6 +16,8 @@ import { SetupProvider } from "./state/setup";
 const AnalysisPage = lazy(() => import("./pages/AnalysisPage").then((m) => ({ default: m.AnalysisPage })));
 const ProfilePage = lazy(() => import("./pages/ProfilePage").then((m) => ({ default: m.ProfilePage })));
 const SettingsPage = lazy(() => import("./pages/SettingsPage").then((m) => ({ default: m.SettingsPage })));
+const TailorPage = lazy(() => import("./pages/TailorPage").then((m) => ({ default: m.TailorPage })));
+const InterviewPage = lazy(() => import("./pages/InterviewPage").then((m) => ({ default: m.InterviewPage })));
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } } });
 
 function Shell() {
@@ -44,6 +46,8 @@ function Shell() {
             <Route path="/" element={<SetupStep openDiagnose={() => setDiag(true)} />} />
             <Route path="/search/:sid" element={<SearchPage openDiagnose={() => setDiag(true)} />} />
             <Route path="/analysis/:aid" element={<AnalysisPage />} />
+            <Route path="/analysis/:aid/tailor/:jobId" element={<TailorPage />} />
+            <Route path="/analysis/:aid/interview/:jobId" element={<InterviewPage />} />
             <Route path="/profile/:rid" element={<ProfilePage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="*" element={<section className="enter"><h1>Page not found</h1><Link className="btn" to="/">Go to setup</Link></section>} />

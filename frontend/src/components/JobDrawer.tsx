@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { useAi } from "../ai";
 import { api } from "../api";
 import type { DeepResult, Gate, JobDetail, ReqCheck, ScoredJob } from "../types";
@@ -10,8 +11,8 @@ import { Alert, Chips, Meter, safeUrl } from "./ui";
 import { useStream } from "./useStream";
 
 const TOOLS = [
-  ["cover_letter", "✉ Cover letter"], ["resume_bullets", "✎ Tailor my resume"],
-  ["interview_prep", "? Interview prep"], ["gap_plan", "↗ 30-day gap plan"],
+  ["cover_letter", "✉ Cover letter"], ["resume_bullets", "✎ Quick bullet ideas"],
+  ["interview_prep", "? Interview prep notes"], ["gap_plan", "↗ 30-day gap plan"],
 ] as const;
 
 export function JobDrawer({ analysisId, job, threshold, onClose, onDeep }: { analysisId: string; job: ScoredJob; threshold: number; onClose: () => void; onDeep: (id: string) => Promise<DeepResult> }) {
@@ -110,6 +111,10 @@ export function JobDrawer({ analysisId, job, threshold, onClose, onDeep }: { ana
       {job.confidence === "low" && <Alert kind="info">Little or no description text was available, so this score is a rough estimate.</Alert>}
 
       <h3 className="sec">AI tools for this job</h3>
+      <div className="agent-links">
+        <Link className="btn small primary" to={`/analysis/${analysisId}/tailor/${job.id}`} data-testid="open-tailor">✎ Tailor my resume (guarded edits + .docx)</Link>
+        <Link className="btn small" to={`/analysis/${analysisId}/interview/${job.id}`}>🎤 Practice interview</Link>
+      </div>
       <div className="toggles">
         {TOOLS.map(([k, l]) => <button key={k} className={`toggle ${active === k ? "on" : ""}`} disabled={s.busy} onClick={() => run(k)}>{l}</button>)}
       </div>

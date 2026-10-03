@@ -1,4 +1,6 @@
 {
+  "agents.fabrications_missed": 0,
+  "agents.guard_f1": 1.0,
   "education.accuracy": 0.8,
   "experience.mae_months": 0.0,
   "experience.within_1_month": 1.0,

@@ -4,6 +4,7 @@ import { post } from "../api";
 import { useAi } from "../ai";
 import type { SearchParams } from "../types";
 import { useSetup } from "../state/setup";
+import { PlanCard } from "./PlanCard";
 import { ResumeCard, resumeReady } from "./ResumeCard";
 import { parsePasted, sourcesPayload, sourcesProblem, SourcesPicker } from "./SourcesPicker";
 
@@ -77,6 +78,7 @@ export function SetupStep({ openDiagnose }: { openDiagnose: () => void }) {
           <label className="field"><span>Job title {titleNeeded && <b className="req">*</b>}</span>
             <input value={p.title} onChange={(e) => upd({ title: e.target.value })} maxLength={100} placeholder="e.g. Data Engineer" autoComplete="off" />
           </label>
+          {sources.mode === "portals" && <PlanCard params={p} onApply={(x) => upd(x)} />}
           <label className="field"><span>Location</span>
             <input value={p.location} onChange={(e) => upd({ location: e.target.value })} maxLength={100} placeholder="e.g. London · Remote · blank = anywhere" autoComplete="off" />
           </label>

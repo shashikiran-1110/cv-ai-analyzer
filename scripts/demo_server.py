@@ -217,6 +217,64 @@ def _extract_answer(prompt: str) -> dict:
     return {"requirements": items[:25]}
 
 
+def _json_reply(obj: dict) -> dict:
+    return {"choices": [{"message": {"content": json.dumps(obj)}}], "usage": {"prompt_tokens": 900, "completion_tokens": 200}}
+
+
+def _calls(*calls) -> dict:
+    tc = [{"id": f"call_{i}_{n}", "type": "function", "function": {"name": n, "arguments": json.dumps(a)}} for i, (n, a) in enumerate(calls)]
+    return {"choices": [{"message": {"role": "assistant", "content": None, "tool_calls": tc}}],
+            "usage": {"prompt_tokens": 1200, "completion_tokens": 120}}
+
+
+def _agent_reply(body: dict) -> dict:
+    """Scripted agents: tailoring (with one fabricated edit the claim guard must catch) and the coach."""
+    names = {t["function"]["name"] for t in body["tools"]}
+    tool_msgs = [m for m in body["messages"] if m.get("role") == "tool"]
+    turns = len(tool_msgs)
+    if "propose_edit" in names:
+        outputs = [json.loads(m["content"]) for m in tool_msgs if m["content"].startswith("{")]
+        section = next((o for o in outputs if "items" in o), {"items": []})
+        bullets = [b for it in section["items"] for b in it["bullets"]]
+        answered = any("user_answer" in o for o in outputs)
+        if turns == 0:
+            return _calls(("get_job_requirements", {}), ("get_profile_section", {"section": "experience"}))
+        if not bullets:
+            return _calls(("finish", {"summary": "No experience bullets found to tailor."}))
+        b1 = bullets[0]
+        if turns == 2:
+            faithful = b1["text"].replace("Built", "Designed and built", 1)
+            calls = [("propose_edit", {"bullet_id": b1["id"], "new_text": faithful, "rationale": "Leads with ownership of the pipeline design.",
+                                       "requirement_ids": ["r1"]})]
+            if len(bullets) > 1:
+                calls.append(("propose_edit", {"bullet_id": bullets[1]["id"], "new_text": "Ran Kubernetes clusters for Spark at Google",
+                                               "rationale": "(demo: fabricated on purpose; the claim guard must block it)", "requirement_ids": ["r2"]}))
+            return _calls(*calls)
+        if not answered:
+            return _calls(("ask_user", {"question": "Did these pipelines have a measurable result (e.g. faster runs, lower cost)? Give a number if you know it."}))
+        ans = next(o["user_answer"] for o in outputs if "user_answer" in o)
+        num = re.search(r"\d+\s*%", ans)
+        text = b1["text"].replace("Built", "Designed and built", 1).rstrip(".") + (f", cutting processing time by {num.group(0).replace(' ', '')}" if num else ", cutting processing time by [X%]")
+        if not any(m.get("tool_calls") and any(c["function"]["name"] == "rescore" for c in m["tool_calls"]) for m in body["messages"] if m.get("role") == "assistant"):
+            return _calls(("propose_edit", {"bullet_id": b1["id"], "new_text": text, "rationale": "Adds the result you gave.", "requirement_ids": ["r1"]}),
+                          ("rescore", {"edit_ids": ["e1"]}))
+        return _calls(("finish", {"summary": "Made your pipeline ownership explicit and added the result you gave. One suggested edit was blocked by the claim guard."}))
+    # coach
+    if turns == 0:
+        return _calls(("get_market_stats", {}), ("list_jobs", {"filter": "near_miss", "sort": "score", "limit": 5}))
+    if turns == 2:
+        stats = json.loads(tool_msgs[0]["content"])
+        gap = (stats.get("top_skill_gaps") or [{"skill": "Kubernetes"}])[0]["skill"]
+        return _calls(("what_if", {"add_skills": [gap], "add_years": 0}))
+    stats, near, wi = (json.loads(m["content"]) for m in tool_msgs[:3])
+    gap = wi["added_skills"][0] if wi["added_skills"] else "a top skill"
+    text = (f"**Where you stand:** {stats['qualifying']} of {stats['job_count']} jobs qualify (threshold {stats['threshold']}%).\n\n"
+            f"- {near['count']} job(s) are near misses (within 15 points).\n"
+            f"- Adding **{gap}** would take you from {wi['qualifying_before']} to {wi['qualifying_after']} qualifying jobs.\n"
+            f"- Demo: this sentence claims 99 recruiters viewed your profile, a number the app can't back up.")
+    return {"choices": [{"message": {"role": "assistant", "content": text}}], "usage": {"prompt_tokens": 1500, "completion_tokens": 150}}
+
+
 @main.app.post("/fake-openai/v1/chat/completions")
 async def fc(request: Request):
     body = await request.json()
@@ -232,6 +290,28 @@ async def fc(request: Request):
                 await asyncio.sleep(0.02)
             yield "data: [DONE]\n\n"
         return StreamingResponse(gen(), media_type="text/event-stream")
+    if body.get("tools"):
+        return _agent_reply(body)
+    fmt = ((body.get("response_format") or {}).get("json_schema") or {}).get("name")
+    if fmt == "Plan":
+        intent = re.search(r"<intent>(.*?)</intent>", user, re.S).group(1)
+        base = re.split(r"\b(?:in|near|or remote|,)\b", intent.lower())[0].strip().title() or "Data Engineer"
+        return _json_reply({"title": base, "alt_titles": [f"{base} II", "Analytics Engineer", "Big Data Engineer", "Florist"],
+                            "exclude_titles": ["Sales Engineer"], "seniority": [], "location": "London" if "london" in intent.lower() else "",
+                            "workplace": ["hybrid"] if "hybrid" in intent.lower() else [], "keywords": ["Python", "SQL", "Spark"],
+                            "note": "Demo plan: one unrelated title (Florist) is included to show it gets dropped."})
+    if fmt == "Questions":
+        ids = re.findall(r"^- (r\d+) · (\w+) · (.+)$", user, re.M)
+        qs = [{"id": f"x{i}", "question": f"Tell me about a time you used: {t[:80]}", "requirement_id": rid,
+               "focus": "gap" if st != "met" else "strength", "what_good_looks_like": "A specific example with your actions and a result."}
+              for i, (rid, st, t) in enumerate(ids[:5])] or [{"id": "x", "question": "Walk me through a project you're proud of.",
+                                                              "requirement_id": "", "focus": "general", "what_good_looks_like": "STAR"}]
+        return _json_reply({"questions": qs})
+    if fmt == "Feedback":
+        return _json_reply({"scores": {"structure": 3, "specificity": 2, "relevance": 4},
+                            "strengths": ["Relevant example"], "improvements": ["Add the result and a number", "Say what *you* did"],
+                            "stronger_answer": "At Acme Analytics I built ETL pipelines in Python and SQL on AWS and orchestrated them with Airflow, "
+                                               "which cut processing time by 35% for the analytics team."})
     everything = "\n".join(str(m.get("content", "")) for m in body["messages"])
     if "Requirements to judge" in user or "has no clearly structured requirement list" in user:
         await asyncio.sleep(0.3)

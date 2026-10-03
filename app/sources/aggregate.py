@@ -97,6 +97,16 @@ def core_tokens(title: str) -> list[str]:
     return out
 
 
+def query_relevance(job: Job, q: JobQuery) -> float:
+    """Best relevance over the query title and the planner's alternative titles; 0 for an excluded title."""
+    tt = set(norm_tokens(job.title))
+    for ex in q.exclude_titles:
+        ex_core = core_tokens(ex)
+        if ex_core and set(ex_core) <= tt:
+            return 0.0
+    return max([relevance(job, core_tokens(q.title))] + [relevance(job, core_tokens(t)) for t in q.alt_titles[:12]])
+
+
 def relevance(job: Job, core: list[str]) -> float:
     if not core:
         return 1.0
@@ -317,7 +327,7 @@ async def run(q: JobQuery, sources: list[Source], on_update: Optional[StatsCb] =
         for j in jobs:
             if not j.title:
                 continue
-            rel = relevance(j, core)
+            rel = query_relevance(j, q) if (q.alt_titles or q.exclude_titles) else relevance(j, core)
             if src.id not in user_chosen and rel < threshold and (q.strict or src.id != "linkedin"):
                 continue
             ok, _ = filters_ok(j, q) if src.id not in user_chosen else (True, "")

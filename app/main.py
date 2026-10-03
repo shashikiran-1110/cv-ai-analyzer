@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import secrets
 import time
 import uuid
@@ -15,7 +16,7 @@ from typing import AsyncIterator, Literal, Optional
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -31,6 +32,9 @@ from .runtime import ratelimit
 from .runtime.events import bus
 from .storage import db
 from .understanding import requirements as req_extract, resume_parse
+from .agents import coach, interview, planner, tailoring
+from .ai import guard
+from . import docx_export
 
 log = logging.getLogger("app")
 app = FastAPI(title="CV AI Analyzer")
@@ -58,6 +62,8 @@ class SearchRequest(BaseModel):
     urls: list[str] = Field(default=[], max_length=25)
     adzuna: Optional[dict[str, str]] = None
     strict: bool = True
+    alt_titles: list[str] = Field(default=[], max_length=12)
+    exclude_titles: list[str] = Field(default=[], max_length=12)
 
 
 class ManualJob(BaseModel):
@@ -278,7 +284,9 @@ async def _run_search(sid: str, req: SearchRequest, hours: Optional[int]) -> Non
     q = src.JobQuery(title=req.title.strip(), location=req.location.strip(), count=req.count, hours=hours,
                      experience=list(req.experience), job_types=list(req.job_types), workplace=list(req.workplace),
                      sort=req.sort, companies={k: v for k, v in req.companies.items()}, urls=req.urls,
-                     adzuna=req.adzuna, strict=req.strict)
+                     adzuna=req.adzuna, strict=req.strict,
+                     alt_titles=[t.strip()[:80] for t in req.alt_titles if t.strip()],
+                     exclude_titles=[t.strip()[:80] for t in req.exclude_titles if t.strip()])
     chosen = [src.BY_ID[i] for i in dict.fromkeys(req.sources)]
 
     async def on_update(stats: dict) -> None:
@@ -453,17 +461,24 @@ async def resume_preview(request: Request, resume_file: Optional[UploadFile] = F
 
 
 # ---------- analysis ----------
-def _compute(a: dict, extra: list[str], threshold: int) -> dict:
-    profile = matcher.ResumeProfile.build(a["resume_text"], a["years"], set(extra), a.get("corrections") or None)
+def _loc_ok(a: dict, j: dict) -> Optional[bool]:
+    loc = a["query"].get("location", "") or ""
+    if not loc:
+        return None
+    return aggregate.location_ok(Job(id=j["id"], title=j.get("title", ""), company=j.get("company", ""),
+                                     location=j.get("location", ""), remote=j.get("remote")),
+                                 src.JobQuery(title=a["query"].get("title", ""), location=loc))
+
+
+def _profile(a: dict, extra: list[str], text: Optional[str] = None) -> matcher.ResumeProfile:
     if "idf" not in a:  # corpus statistics for semantic similarity: these postings + the resume
         a["idf"] = matcher.corpus_idf([j.get("description") or "" for j in a["jobs_full"]] + [a["resume_text"]])
-    q = src.JobQuery(title=a["query"].get("title", ""), location=a["query"].get("location", "") or "")
-    def loc_ok(j: dict) -> Optional[bool]:
-        if not q.location:
-            return None
-        return aggregate.location_ok(Job(id=j["id"], title=j.get("title", ""), company=j.get("company", ""),
-                                         location=j.get("location", ""), remote=j.get("remote")), q)
-    results = [matcher.score_job(j, profile, a["idf"], loc_ok(j)) for j in a["jobs_full"]]
+    return matcher.ResumeProfile.build(text or a["resume_text"], a["years"], set(extra), a.get("corrections") or None)
+
+
+def _compute(a: dict, extra: list[str], threshold: int) -> dict:
+    profile = _profile(a, extra)
+    results = [matcher.score_job(j, profile, a["idf"], _loc_ok(a, j)) for j in a["jobs_full"]]
     for r in results:  # merge verified AI judgments (Deep Verifier v2); the engine recomputes the score
         r["score_det"] = r["score"]
         stored = a.get("deep", {}).get(r["id"])
@@ -868,6 +883,266 @@ async def deep_check(aid: str, job_id: str, request: Request):
     await run_in_threadpool(_persist_analysis, aid, a)
     out = next(r["deep"] for r in computed["jobs"] if r["id"] == job_id)
     return {"deep": out, "summary": computed["summary"], "jobs": computed["jobs"]}
+
+
+# ---------- agents (ROADMAP §8, Phase 5) ----------
+AGENT_RUNS: dict[str, dict] = {}
+
+
+class PlanRequest(BaseModel):
+    intent: str = Field(min_length=2, max_length=500)
+
+
+@app.post("/api/plan")
+async def plan_search(body: PlanRequest, request: Request):
+    """Search Planner: role intent → editable plan (AI when a key is set, built-in rules otherwise)."""
+    cfg = llm.resolve(request.headers)
+    if cfg:
+        ratelimit.check(request, "ai")
+        try:
+            return await planner.plan(cfg, body.intent, gateway.Call(agent="search_planner", owner=owner(request)))
+        except llm.LLMError as e:
+            return {**planner.fallback(body.intent), "ai_error": str(e)}
+    return planner.fallback(body.intent)
+
+
+def _scored(a: dict, job_id: str) -> dict:
+    r = next((x for x in a["result"]["jobs"] if x["id"] == job_id), None)
+    if r is None:
+        raise HTTPException(404, "Job not found in this analysis.")
+    return r
+
+
+def _score_text_fn(a: dict, job: dict):
+    def score(text: str) -> dict:
+        return matcher.score_job(job, _profile(a, a.get("extra", []), text), a["idf"], _loc_ok(a, job))
+    return score
+
+
+def _agent_run(run_id: str, request: Request) -> dict:
+    r = AGENT_RUNS.get(run_id) or db.kv_get(f"agentrun:{run_id}")
+    if not r or (r.get("owner") and r["owner"] != owner(request)):
+        raise HTTPException(404, "Unknown or expired assistant run.")
+    AGENT_RUNS[run_id] = r
+    return r
+
+
+def _public_run(r: dict) -> dict:
+    return {k: v for k, v in r.items() if k not in ("state", "owner")}
+
+
+def _save_run(r: dict) -> None:
+    db.kv_set(f"agentrun:{r['id']}", r, db.retention_seconds())
+
+
+async def _tailor_task(r: dict, cfg: llm.LLMConfig, answer: Optional[str] = None) -> None:
+    a = _analysis(r["aid"])
+    job = _job(a, r["job_id"])
+    sess = tailoring.Session(a["resume_text"], job, _scored(a, r["job_id"]), _score_text_fn(a, job),
+                             r.get("user_facts", ""), r.get("edits"))
+
+    async def on_step(st: dict) -> None:
+        r["trace"].append(st)
+        await bus.publish(r["id"], "agent.step", st)
+        if st.get("tool") == "propose_edit":
+            await bus.publish(r["id"], "agent.edit", {"edits": sess.edits})
+    try:
+        res = await tailoring.run(cfg, sess, gateway.Call(agent="tailoring", owner=r["owner"], analysis_id=r["aid"], run_id=r["id"]),
+                                  on_step=on_step, state=r.get("state"), answer=answer)
+        if answer:
+            r["user_facts"] = sess.user_facts
+        snap = await run_in_threadpool(sess.snapshot)
+        r.update(status=res.status, final=res.final, question=res.question, state=res.state or None, **snap)
+        await bus.publish(r["id"], "agent.question" if res.status == "needs_input" else "agent.done", _public_run(r))
+        await bus.finish(r["id"], "done")
+    except llm.LLMError as e:
+        r.update(status="error", error=str(e))
+        await bus.finish(r["id"], "error", error=str(e)[:200])
+    except Exception as e:
+        log.exception("tailoring run failed")
+        r.update(status="error", error=f"The tailoring assistant failed ({type(e).__name__}).")
+        await bus.finish(r["id"], "error", error=r["error"])
+    finally:
+        await run_in_threadpool(_save_run, r)
+
+
+def _start(coro) -> None:
+    task = asyncio.create_task(coro)
+    _TASKS.add(task)
+    task.add_done_callback(_TASKS.discard)
+
+
+@app.post("/api/analysis/{aid}/tailor/{job_id}")
+async def start_tailoring(aid: str, job_id: str, request: Request):
+    a = _analysis(aid)
+    _job(a, job_id)
+    cfg = llm.require(request.headers)
+    ratelimit.check(request, "ai", cost=3)
+    run_id = "tl" + uuid.uuid4().hex[:30]
+    r = {"id": run_id, "kind": "tailoring", "aid": aid, "job_id": job_id, "owner": owner(request), "status": "running",
+         "trace": [], "edits": [], "user_facts": "", "created": time.time()}
+    AGENT_RUNS[run_id] = r
+    bus.create(run_id, "tailoring")
+    _start(_tailor_task(r, cfg))
+    return {"run_id": run_id}
+
+
+class AnswerRequest(BaseModel):
+    answer: str = Field(min_length=1, max_length=2000)
+
+
+@app.get("/api/agent-runs/{run_id}")
+async def get_agent_run(run_id: str, request: Request):
+    return _public_run(_agent_run(run_id, request))
+
+
+@app.post("/api/agent-runs/{run_id}/answer")
+async def answer_agent(run_id: str, body: AnswerRequest, request: Request):
+    r = _agent_run(run_id, request)
+    if r["status"] != "needs_input" or not r.get("state"):
+        raise HTTPException(409, "This run isn't waiting for an answer.")
+    cfg = llm.require(request.headers)
+    ratelimit.check(request, "ai")
+    r["status"] = "running"
+    bus.create(run_id, r["kind"])
+    _start(_tailor_task(r, cfg, answer=body.answer))
+    return {"run_id": run_id}
+
+
+class EditIn(BaseModel):
+    bullet_id: str = Field(max_length=20)
+    new_text: str = Field(min_length=1, max_length=600)
+
+
+class EditsRequest(BaseModel):
+    edits: list[EditIn] = Field(default=[], max_length=20)
+    user_facts: str = Field(default="", max_length=4000)
+
+
+def _checked_edits(a: dict, job: dict, body: EditsRequest) -> tuple[tailoring.Session, list[dict]]:
+    sess = tailoring.Session(a["resume_text"], job, _scored(a, job["id"]), _score_text_fn(a, job), body.user_facts)
+    out = []
+    for e in body.edits:
+        src_text = sess.bullets.get(e.bullet_id, {}).get("text", "")
+        if not src_text and not e.bullet_id.startswith("new:"):
+            raise HTTPException(422, f"Unknown bullet {e.bullet_id}.")
+        out.append({"bullet_id": e.bullet_id, "new_text": e.new_text.strip(), "original": src_text,
+                    "violations": guard.verify_claim(e.new_text, a["resume_text"], src_text, body.user_facts)})
+    return sess, out
+
+
+@app.post("/api/analysis/{aid}/tailor/{job_id}/preview")
+async def tailor_preview(aid: str, job_id: str, body: EditsRequest):
+    """Claim-check the user's (possibly hand-edited) accepted edits and project the score."""
+    a = _analysis(aid)
+    job = _job(a, job_id)
+
+    def go():
+        sess, edits = _checked_edits(a, job, body)
+        return {"edits": edits, "projection": sess.projection([e for e in edits if not e["violations"]])}
+    return await run_in_threadpool(go)
+
+
+@app.post("/api/analysis/{aid}/tailor/{job_id}/docx")
+async def tailor_docx(aid: str, job_id: str, body: EditsRequest):
+    a = _analysis(aid)
+    job = _job(a, job_id)
+
+    def go():
+        sess, edits = _checked_edits(a, job, body)
+        bad = [e for e in edits if e["violations"]]
+        if bad:
+            raise HTTPException(422, "Some edits add facts that aren't on your resume: " + "; ".join(bad[0]["violations"]))
+        text = tailoring.apply_edits(a["resume_text"], sess.profile, edits)
+        return docx_export.resume_docx(text, title=f"Resume – {job.get('title', '')} at {job.get('company', '')}".strip(" –at"))
+    data = await run_in_threadpool(go)
+    name = re.sub(r"[^A-Za-z0-9]+", "-", f"resume-{job.get('company', '')}-{job.get('title', '')}").strip("-")[:80] or "resume"
+    return Response(data, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    headers={"Content-Disposition": f'attachment; filename="{name}.docx"'})
+
+
+class CoachRequest(BaseModel):
+    messages: list[ChatMessage] = Field(min_length=1, max_length=30)
+
+
+async def _coach_task(run_id: str, a: dict, aid: str, cfg: llm.LLMConfig, history: list[dict], who: str) -> None:
+    def rescore(add: list[str], add_years: float) -> dict:
+        extra, unknown = _parse_extra(list(a.get("extra", [])) + list(add))
+        b = dict(a)
+        if add_years:
+            b["corrections"] = {**(a.get("corrections") or {}),
+                                "years_override": float(a["result"]["summary"]["resume_years"] or 0) + add_years}
+        return {**_compute(b, extra, a["result"]["summary"]["threshold"]), "extra": extra, "unknown": unknown}
+    c = coach.Coach(a, rescore)
+
+    async def on_step(st: dict) -> None:
+        await bus.publish(run_id, "agent.step", st)
+    try:
+        out = await coach.answer(cfg, c, history, gateway.Call(agent="career_coach", owner=who, analysis_id=aid,
+                                                               run_id=run_id), on_step=on_step)
+        await bus.publish(run_id, "agent.done", out)
+        await bus.finish(run_id, "done")
+    except llm.LLMError as e:
+        await bus.finish(run_id, "error", error=str(e)[:300])
+    except Exception as e:
+        log.exception("coach failed")
+        await bus.finish(run_id, "error", error=f"The coach failed ({type(e).__name__}).")
+
+
+@app.post("/api/analysis/{aid}/coach")
+async def coach_chat(aid: str, body: CoachRequest, request: Request):
+    """Career Coach with tools; progress and the answer arrive as run events (agent.step, agent.done)."""
+    a = _analysis(aid)
+    cfg = llm.require(request.headers)
+    ratelimit.check(request, "ai")
+    run_id = "co" + uuid.uuid4().hex[:30]
+    bus.create(run_id, "coach")
+    _start(_coach_task(run_id, a, aid, cfg, [m.model_dump() for m in body.messages], owner(request)))
+    return {"run_id": run_id}
+
+
+@app.post("/api/analysis/{aid}/interview/{job_id}/questions")
+async def interview_questions(aid: str, job_id: str, request: Request):
+    a = _analysis(aid)
+    job = _job(a, job_id)
+    cfg = llm.require(request.headers)
+    ratelimit.check(request, "ai")
+    qs = await interview.questions(cfg, job, _scored(a, job_id), a["resume_text"],
+                                   call=gateway.Call(agent="interview_coach", owner=owner(request), analysis_id=aid))
+    hist = await run_in_threadpool(db.kv_get, f"practice:{aid}:{job_id}") or {"answers": []}
+    hist["questions"] = qs
+    await run_in_threadpool(db.kv_set, f"practice:{aid}:{job_id}", hist, db.retention_seconds())
+    return hist
+
+
+class PracticeAnswer(BaseModel):
+    question_id: str = Field(max_length=8)
+    answer: str = Field(min_length=20, max_length=4000)
+
+
+@app.get("/api/analysis/{aid}/interview/{job_id}")
+async def interview_history(aid: str, job_id: str):
+    _job(_analysis(aid), job_id)
+    return await run_in_threadpool(db.kv_get, f"practice:{aid}:{job_id}") or {"questions": [], "answers": []}
+
+
+@app.post("/api/analysis/{aid}/interview/{job_id}/answer")
+async def interview_answer(aid: str, job_id: str, body: PracticeAnswer, request: Request):
+    a = _analysis(aid)
+    job = _job(a, job_id)
+    cfg = llm.require(request.headers)
+    ratelimit.check(request, "ai")
+    hist = await run_in_threadpool(db.kv_get, f"practice:{aid}:{job_id}") or {"questions": [], "answers": []}
+    q = next((x for x in hist.get("questions", []) if x["id"] == body.question_id), None)
+    if not q:
+        raise HTTPException(404, "Generate questions first.")
+    fb = await interview.feedback(cfg, job, q, body.answer, a["resume_text"],
+                                  call=gateway.Call(agent="interview_coach", owner=owner(request), analysis_id=aid))
+    entry = {"question_id": q["id"], "question": q["question"], "answer": body.answer, "feedback": fb, "at": time.time()}
+    hist.setdefault("answers", []).append(entry)
+    hist["answers"] = hist["answers"][-50:]
+    await run_in_threadpool(db.kv_set, f"practice:{aid}:{job_id}", hist, db.retention_seconds())
+    return entry
 
 
 # ---------- frontend ----------

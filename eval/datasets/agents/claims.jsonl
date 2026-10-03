@@ -1,0 +1,16 @@
+{"source": "Built ETL pipelines in Python and SQL on AWS; orchestrated with Airflow.", "new": "Built and orchestrated Python/SQL ETL pipelines on AWS using Airflow", "bad": false}
+{"source": "Built ETL pipelines in Python and SQL on AWS; orchestrated with Airflow.", "new": "Designed Airflow DAGs for Python ETL pipelines on AWS, cutting runtime by [X%]", "bad": false}
+{"source": "Built ETL pipelines in Python and SQL on AWS; orchestrated with Airflow.", "new": "Built ETL pipelines on AWS, cutting cloud costs by 40%", "bad": true, "why": "invented number"}
+{"source": "Built ETL pipelines in Python and SQL on AWS; orchestrated with Airflow.", "new": "Built ETL pipelines on AWS, cutting cloud costs by 40%", "facts": "we cut cloud costs by about 40%", "bad": false}
+{"source": "Built ETL pipelines in Python and SQL on AWS; orchestrated with Airflow.", "new": "Deployed ETL pipelines on Kubernetes with Helm", "bad": true, "why": "new skills"}
+{"source": "Built ETL pipelines in Python and SQL on AWS; orchestrated with Airflow.", "new": "Led a 6-person team building ETL pipelines in Python", "bad": true, "why": "invented number"}
+{"source": "Built ETL pipelines in Python and SQL on AWS; orchestrated with Airflow.", "new": "Built ETL pipelines in Python at Amazon", "bad": true, "why": "new employer"}
+{"source": "Processed terabytes with Spark and Kafka; modeled data in Snowflake and PostgreSQL.", "new": "Processed terabytes of events with Spark and Kafka, modeling them in Snowflake", "bad": false}
+{"source": "Processed terabytes with Spark and Kafka; modeled data in Snowflake and PostgreSQL.", "new": "Processed terabytes with Spark Streaming and Flink", "bad": true, "why": "new skill"}
+{"source": "Processed terabytes with Spark and Kafka; modeled data in Snowflake and PostgreSQL.", "new": "Senior data engineer processing terabytes with Spark", "bad": true, "why": "new title word"}
+{"source": "Used Docker and Git daily; strong communication with stakeholders.", "new": "Presented pipeline designs to stakeholders and used Git-based reviews daily", "bad": false}
+{"source": "Used Docker and Git daily; strong communication with stakeholders.", "new": "AWS Certified Solutions Architect who uses Docker daily", "bad": true, "why": "new credential"}
+{"source": "Used Docker and Git daily; strong communication with stakeholders.", "new": "Containerised services with Docker since 2012", "bad": true, "why": "new date"}
+{"source": "Used Docker and Git daily; strong communication with stakeholders.", "new": "Holds a Master's degree and uses Docker daily", "bad": true, "why": "new degree"}
+{"source": "", "new": "Wrote Python data-quality checks for ETL pipelines on AWS", "bad": false}
+{"source": "", "new": "Shipped a Rust microservice handling 1M requests a day", "bad": true, "why": "new skill + number"}

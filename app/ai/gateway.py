@@ -297,6 +297,48 @@ async def _complete(cfg, call: Call, system, messages, *, cacheable, schema, sch
     return text, {"usage": usage, "cost_usd": c, "model": model}
 
 
+async def tool_step(cfg: llm.LLMConfig, call: Call, system: str, messages: list[dict], tools: list[dict], *,
+                    cacheable: str = "") -> dict:
+    """One model turn that may request tools. `tools` = [{"name", "description", "schema"}] (strict JSON schemas).
+    `messages` are provider-native (see app/ai/agent.py). Returns {"text", "tool_calls": [{"id","name","input"}],
+    "assistant": provider-native assistant message to append}."""
+    model = model_for(cfg, call.tier)
+    check_budget(cfg, call)
+    url, payload = _payload(cfg, model, system, cacheable, messages, stream=False, schema=None, schema_name="",
+                            tier=call.tier, json_mode=False)
+    if cfg.provider == "openai":
+        payload["tools"] = [{"type": "function", "function": {"name": t["name"], "description": t["description"],
+                                                              "parameters": t["schema"], "strict": True}} for t in tools]
+    else:
+        payload["tools"] = [{"name": t["name"], "description": t["description"], "input_schema": t["schema"]} for t in tools]
+    t0 = time.perf_counter()
+    try:
+        data = await _post(cfg, url, payload)
+    except llm.LLMError as e:
+        _log(call, cfg, model, {}, t0, f"error:{e.status}")
+        raise
+    _log(call, cfg, model, _usage(cfg.provider, data), t0, "ok")
+    if cfg.provider == "openai":
+        msg = (data.get("choices") or [{}])[0].get("message") or {}
+        calls = []
+        for tc in msg.get("tool_calls") or []:
+            try:
+                args = json.loads(tc["function"].get("arguments") or "{}")
+            except ValueError:
+                args = {"__invalid_json__": tc["function"].get("arguments", "")[:500]}
+            calls.append({"id": tc["id"], "name": tc["function"]["name"], "input": args})
+        assistant = {"role": "assistant", "content": msg.get("content")}
+        if msg.get("tool_calls"):
+            assistant["tool_calls"] = msg["tool_calls"]
+        return {"text": msg.get("content") or "", "tool_calls": calls, "assistant": assistant}
+    if data.get("stop_reason") == "refusal":
+        raise llm.LLMError("The AI declined this request.", 422)
+    blocks = data.get("content") or []
+    calls = [{"id": b["id"], "name": b["name"], "input": b.get("input") or {}} for b in blocks if b.get("type") == "tool_use"]
+    return {"text": "".join(b.get("text", "") for b in blocks if b.get("type") == "text"), "tool_calls": calls,
+            "assistant": {"role": "assistant", "content": blocks}, "stop_reason": data.get("stop_reason")}
+
+
 def _parse_json(text: str) -> Any:
     try:
         return json.loads(text)

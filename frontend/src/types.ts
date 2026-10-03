@@ -7,6 +7,11 @@ export interface SearchQuery {
 export interface SearchParams {
   title: string; location: string; count: number; time_range: string; custom_hours?: number;
   experience: string[]; job_types: string[]; workplace: string[]; sort: string; strict: boolean;
+  alt_titles?: string[]; exclude_titles?: string[];
+}
+export interface SearchPlan {
+  title: string; alt_titles: string[]; exclude_titles: string[]; seniority: string[]; location: string; workplace: string[];
+  keywords: string[]; note: string; source: string; dropped_titles?: string[]; ai_error?: string;
 }
 export interface SourceInfo { id: string; name: string; kind: string; remote_only: boolean; needs: string; note: string; host: string }
 export interface SourceStat {
@@ -104,3 +109,21 @@ export interface ProfileView {
 }
 export interface Spend { calls: number; cost_usd: number; input_tokens: number; output_tokens: number; cached_tokens: number; result_cache_hits: number; cost_known: boolean }
 export interface DeepEstimate { estimate_usd: number | null; calls: number; model?: string; message: string }
+export interface TailorEdit {
+  id?: string; bullet_id: string; original: string; new_text: string; rationale?: string; requirement_ids?: string[];
+  violations: string[]; ok?: boolean; role?: string;
+}
+export interface Projection { score_before: number; score_after: number; changed: { requirement: string; before: string; after: string }[] }
+export interface AgentStep { step: number; kind: string; tool?: string; tools?: string[]; text?: string; input?: string; output?: string; error?: boolean; ms?: number }
+export interface AgentRun {
+  id: string; kind: string; aid: string; job_id: string; status: "running" | "needs_input" | "done" | "limit" | "error";
+  trace: AgentStep[]; edits: TailorEdit[]; projection?: Projection; question?: string; final?: string; error?: string;
+  user_facts?: string;
+}
+export interface PracticeQuestion { id: string; question: string; requirement_id: string; focus: "gap" | "strength" | "general"; what_good_looks_like: string }
+export interface PracticeFeedback {
+  scores: { structure: number; specificity: number; relevance: number }; strengths: string[]; improvements: string[];
+  stronger_answer: string; violations: string[];
+}
+export interface PracticeEntry { question_id: string; question: string; answer: string; feedback: PracticeFeedback; at: number }
+export interface PracticeHistory { questions: PracticeQuestion[]; answers: PracticeEntry[] }

@@ -13,7 +13,7 @@ export function useRunEvents(runId: string | null | undefined, onEvent: (e: RunE
     const es = new EventSource(`/api/runs/${runId}/events`);
     let finished = false;
     const types = ["source.progress", "jobs.ready", "insight.started", "insight.ready", "deep.progress", "agent.step",
-      "agent.question", "agent.edit", "run.finished"];
+      "agent.question", "agent.edit", "agent.done", "run.finished"];
     const listeners = types.map((t) => {
       const fn = (ev: MessageEvent) => {
         let data: any = {};

@@ -146,6 +146,41 @@ def test_full_flow(server, browser, resume_pdf):
     expect(page.locator(".card:has(h2:has-text('Skill gaps')) .learn-head span", has_text="Kubernetes")).to_have_count(0, timeout=8000)
     page.goto(report_url)
 
+    # tailoring agent: guarded edits, a question, projected score, .docx export (Phase 5)
+    page.click(".tabs button:has-text('Jobs')")
+    page.locator(".r-head").first.click()
+    page.click("[data-testid=open-tailor]")
+    expect(page.locator("h1#h-tailor")).to_be_visible(timeout=10000)
+    page.click("[data-testid=start-tailor]")
+    expect(page.locator("[data-testid=agent-question]")).to_be_visible(timeout=15000)
+    expect(page.locator(".diff.bad .violations")).to_contain_text("Kubernetes")          # fabricated edit is blocked
+    page.fill("[data-testid=agent-question] textarea", "Runs got about 35% faster")
+    page.click("button:has-text('Send answer')")
+    expect(page.locator(".final")).to_contain_text("Summary", timeout=15000)
+    expect(page.locator(".diff.on textarea").first).to_have_value(re.compile("35%"))
+    expect(page.locator("[data-testid=docx]")).to_be_enabled(timeout=5000)
+    with page.expect_download() as dl:
+        page.click("[data-testid=docx]")
+    assert dl.value.suggested_filename.endswith(".docx")
+
+    # interview practice
+    page.go_back()
+    expect(page.locator(".modal")).to_be_visible(timeout=5000)
+    page.click("a:has-text('Practice interview')")
+    page.click("[data-testid=gen-questions]")
+    page.locator(".qlist .q").first.click()
+    page.fill("textarea[aria-label='Your answer']", "I built ETL pipelines in Python and SQL on AWS with Airflow at Acme Analytics.")
+    page.click("[data-testid=get-feedback]")
+    expect(page.locator("[data-testid=feedback]").first).to_contain_text("Stronger version", timeout=10000)
+    expect(page.locator(".feedback .violations").first).to_contain_text("35%")         # invented number flagged
+
+    # coach with tools: numbers it can't back up are flagged
+    page.goto(report_url.split("?")[0] + "?tab=assistant")
+    page.fill("textarea[aria-label='Message']", "How can I qualify for more jobs?")
+    page.keyboard.press("Enter")
+    expect(page.locator(".bubble.assistant")).to_contain_text("Where you stand", timeout=15000)
+    expect(page.locator("[data-testid=unverified]")).to_contain_text("99")
+
     # settings → export
     page.click("a:has-text('Settings')")
     with page.expect_download() as d:
@@ -158,6 +193,16 @@ def test_full_flow(server, browser, resume_pdf):
     page.click("[data-testid=run]")
     expect(page).to_have_url(re.compile(r"/analysis/"), timeout=15000)
     assert time.time() - t0 < 6
+
+    # search planner: AI plan, unrelated title dropped, plan applied to the form
+    page.click("a.brand")
+    page.fill("input[aria-label='Describe the role']", "data engineer in London, hybrid")
+    page.click("button:has-text('Plan with AI')")
+    expect(page.locator("[data-testid=plan]")).to_contain_text("Analytics Engineer", timeout=8000)
+    expect(page.locator("[data-testid=plan] .chip.ok", has_text="Florist")).to_have_count(0)
+    expect(page.locator("[data-testid=plan]")).to_contain_text("Dropped as a different job: Florist")
+    page.click("button:has-text('Use this plan')")
+    expect(page.locator(".plan-card")).to_contain_text("Plan active")
 
     # review mode → choose jobs → analyze selected
     page.click("a.brand")

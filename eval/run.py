@@ -29,7 +29,7 @@ HEADLINE = {
     "skills.f1": ("+", 0.01), "skills.trap_pass_rate": ("+", 0.0), "skills.negation_accuracy": ("+", 0.0),
     "experience.mae_months": ("-", 0.5), "experience.within_1_month": ("+", 0.0),
     "education.accuracy": ("+", 0.0), "location.accuracy": ("+", 0.0),
-    "gates.f1": ("+", 0.01), "skills.f1_nontech": ("+", 0.02),
+    "gates.f1": ("+", 0.01), "agents.fabrications_missed": ("-", 0.0), "agents.guard_f1": ("+", 0.01), "skills.f1_nontech": ("+", 0.02),
     "requirements.f1": ("+", 0.01), "requirements.holdout_f1": ("+", 0.01), "fairness.identical_rate": ("+", 0.0),
 }
 
@@ -182,6 +182,24 @@ def suite_gates() -> dict:
     return {"metrics": {**M.prf(tp, fp, fn), "cases": len(_load("gates.jsonl"))}, "failures": fails}
 
 
+def suite_agents() -> dict:
+    """Claim guard (ROADMAP §8.5/§8.9): flag every fabricated edit, pass every faithful one."""
+    from app.ai import guard
+    from tests.conftest import RESUME_LINES
+    profile = "\n".join(RESUME_LINES)
+    tp = fp = fn = tn = 0
+    fails = []
+    for c in _load("agents/claims.jsonl"):
+        v = guard.verify_claim(c["new"], profile, c["source"], c.get("facts", ""))
+        flagged = bool(v)
+        tp, fp = tp + (flagged and c["bad"]), fp + (flagged and not c["bad"])
+        fn, tn = fn + (not flagged and c["bad"]), tn + (not flagged and not c["bad"])
+        if flagged != c["bad"]:
+            fails.append({"new": c["new"], "expected_bad": c["bad"], "violations": v, "why": c.get("why", "")})
+    return {"metrics": {**{f"guard_{k}": v for k, v in M.prf(tp, fp, fn).items()},
+                        "fabrications_missed": fn, "faithful_blocked": fp, "cases": tp + fp + fn + tn}, "failures": fails}
+
+
 def suite_match() -> dict:
     """Score vs human label on labelled resume–job pairs (eval/datasets/match/pairs.jsonl). See its README."""
     pairs = [p for p in _load("match/pairs.jsonl") if p.get("label") and p.get("reviewed")]
@@ -203,7 +221,8 @@ def suite_match() -> dict:
 
 
 SUITES = {"skills": suite_skills, "experience": suite_experience, "education": suite_education,
-          "location": suite_location, "requirements": suite_requirements, "gates": suite_gates, "fairness": suite_fairness,
+          "location": suite_location, "requirements": suite_requirements, "gates": suite_gates, "agents": suite_agents,
+          "fairness": suite_fairness,
           "match": suite_match}
 
 

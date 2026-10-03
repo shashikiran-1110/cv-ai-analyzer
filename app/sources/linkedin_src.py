@@ -13,7 +13,8 @@ async def fetch(q: JobQuery, client: httpx.AsyncClient, on_progress=None) -> lis
     core = aggregate.core_tokens(q.title)
 
     def card_ok(j: Job) -> bool:     # card has title, company, location, date
-        return (not q.strict or aggregate.relevance(j, core) >= 0.75) and aggregate.filters_ok(j, q)[0]
+        rel = aggregate.query_relevance(j, q) if (q.alt_titles or q.exclude_titles) else aggregate.relevance(j, core)
+        return (not q.strict or rel >= 0.75) and aggregate.filters_ok(j, q)[0]
 
     def detail_ok(j: Job) -> bool:   # after details: employment type etc. are known
         return aggregate.filters_ok(j, q)[0]
