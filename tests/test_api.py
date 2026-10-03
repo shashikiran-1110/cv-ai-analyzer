@@ -4,7 +4,7 @@ import json
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app import linkedin, main
+from app import linkedin, llm, main
 from tests.conftest import make_pdf
 
 DESC = (
@@ -15,7 +15,7 @@ DESC = (
 
 @pytest.fixture
 def client(monkeypatch):
-    async def fake_search(title, location, count, hours=None, on_progress=None, client=None):
+    async def fake_search(title, location, count, hours=None, on_progress=None, client=None, **kw):
         if title == "boom":
             raise linkedin.LinkedInError("LinkedIn is rate-limiting requests right now.")
         await on_progress("details", 1, 1)
@@ -85,51 +85,173 @@ async def test_validation_and_errors(client, resume_pdf):
         assert gone.status_code == 404
 
 
-async def test_ai_failure_falls_back(client, resume_pdf, monkeypatch):
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
-
-    async def boom(*a, **k):
-        raise RuntimeError("down")
-
-    monkeypatch.setattr("app.insights.llm_insights", boom)
-    async with client as c:
-        assert (await c.get("/api/config")).json()["ai_available"] is True
-        sid = (await c.post("/api/search", json={"title": "data engineer", "count": 2})).json()["search_id"]
-        await wait_done(c, sid)
-        r = await c.post("/api/analyze", data={"search_id": sid, "use_ai": "true"},
-                         files={"resume": ("cv.pdf", resume_pdf, "application/pdf")})
-        assert r.status_code == 200
-        ins = r.json()["insights"]
-        assert ins["source"] == "local" and "ai_error" in ins
+async def _analyzed(c, resume_pdf, headers=None, **data):
+    sid = (await c.post("/api/search", json={"title": "data engineer", "count": 3})).json()["search_id"]
+    await wait_done(c, sid)
+    r = await c.post("/api/analyze", data={"search_id": sid, **data}, headers=headers or {},
+                     files={"resume": ("cv.pdf", resume_pdf, "application/pdf")})
+    assert r.status_code == 200, r.text
+    return r.json()
 
 
-async def test_claude_json_parsing():
-    from app.insights import _extract_json
-    assert _extract_json('Here you go:\n```json\n{"a": 1}\n```')["a"] == 1
-
-
-async def test_openai_provider(client, resume_pdf, monkeypatch):
-    import httpx
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    assert main.config.ai_provider() == "openai"
+async def test_search_filters_forwarded(client, monkeypatch):
     seen = {}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    async def fake(title, location, count, hours=None, on_progress=None, client=None, **kw):
+        seen.update(kw)
+        return []
+
+    monkeypatch.setattr(linkedin, "search_jobs", fake)
+    async with client as c:
+        r = await c.post("/api/search", json={"title": "data engineer", "experience": ["entry", "mid_senior"],
+                                              "job_types": ["contract"], "workplace": ["remote"], "sort": "relevant"})
+        await wait_done(c, r.json()["search_id"])
+        assert (await c.post("/api/search", json={"title": "x y", "workplace": ["moon"]})).status_code == 422
+    assert seen == {"experience": ["entry", "mid_senior"], "job_types": ["contract"],
+                    "workplace": ["remote"], "sort": "relevant"}
+
+
+async def test_paste_text_and_rescore(client, resume_pdf):
+    from tests.conftest import RESUME_LINES
+    async with client as c:
+        sid = (await c.post("/api/search", json={"title": "data engineer", "count": 3})).json()["search_id"]
+        await wait_done(c, sid)
+        r = await c.post("/api/analyze", data={"search_id": sid, "resume_text": "\n".join(RESUME_LINES),
+                                               "extra_skills": json.dumps(["k8s", "nonsense skill"])})
+        body = r.json()
+        assert r.status_code == 200 and body["extra_skills"] == ["Kubernetes"] and body["unknown_skills"] == ["nonsense skill"]
+        aid = body["analysis_id"]
+        gaps = {g["skill"] for g in body["summary"]["skill_gaps"]}
+        assert gaps == {"Terraform"}                      # Kubernetes was supplied by the user
+        before = body["jobs"][0]["score"]
+        r2 = await c.post(f"/api/analysis/{aid}/rescore", json={"extra_skills": ["Kubernetes", "terraform"]})
+        assert r2.json()["jobs"][0]["score"] > before and not r2.json()["summary"]["skill_gaps"]
+        assert (await c.post("/api/analysis/nope/rescore", json={})).status_code == 404
+        d = await c.get(f"/api/analysis/{aid}/job/0")
+        assert "Requirements" in d.json()["description"]
+        assert (await c.get(f"/api/analysis/{aid}/job/999")).status_code == 404
+        no_resume = await c.post("/api/analyze", data={"search_id": sid})
+        assert no_resume.status_code == 422
+
+
+def _mock_llm(monkeypatch, handler):
+    real = httpx.AsyncClient
+    monkeypatch.setattr(llm, "_client", lambda: real(transport=httpx.MockTransport(handler)))
+
+
+import httpx  # noqa: E402
+
+HDR = {"X-AI-Provider": "openai", "X-AI-Key": "sk-secret-123", "X-AI-Model": "gpt-5.6-luna"}
+
+
+async def test_ai_insights_via_browser_key(client, resume_pdf, monkeypatch):
+    seen = {}
+
+    def handler(request):
         seen["auth"] = request.headers["authorization"]
         seen["body"] = json.loads(request.content)
         out = {"summary": "Solid fit.", "strengths": ["Python"], "improvements": ["Add metrics"],
                "skills_to_learn": [{"skill": "Kubernetes", "why": "w", "how": "h"}]}
         return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(out)}}]})
 
-    real = httpx.AsyncClient
-    monkeypatch.setattr("app.insights.httpx.AsyncClient",
-                        lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    _mock_llm(monkeypatch, handler)
     async with client as c:
-        sid = (await c.post("/api/search", json={"title": "data engineer", "count": 2})).json()["search_id"]
-        await wait_done(c, sid)
-        r = await c.post("/api/analyze", data={"search_id": sid, "use_ai": "true"},
-                         files={"resume": ("cv.pdf", resume_pdf, "application/pdf")})
-    ins = r.json()["insights"]
+        body = await _analyzed(c, resume_pdf, HDR, use_ai="true")
+    ins = body["insights"]
     assert ins["source"] == "openai" and ins["summary"] == "Solid fit."
-    assert seen["auth"] == "Bearer sk-test" and seen["body"]["model"] == "gpt-5.6-luna"
-    assert ins["skills_to_learn"][0]["jobs"] == 2     # joined with local gap counts
+    assert seen["auth"] == "Bearer sk-secret-123" and seen["body"]["model"] == "gpt-5.6-luna"
+    assert ins["skills_to_learn"][0]["jobs"] == 3
+    assert "sk-secret-123" not in json.dumps(body)
+
+
+async def test_ai_failure_falls_back_without_leaking_key(client, resume_pdf, monkeypatch):
+    def handler(request):
+        return httpx.Response(401, json={"error": {"message": "Incorrect API key provided: sk-secret-123"}})
+
+    _mock_llm(monkeypatch, handler)
+    async with client as c:
+        body = await _analyzed(c, resume_pdf, HDR, use_ai="true")
+    assert body["insights"]["source"] == "local"
+    assert "rejected the API key" in body["insights"]["ai_error"]
+    assert "sk-secret-123" not in json.dumps(body)
+
+
+async def test_verify_endpoint(client, monkeypatch):
+    codes = iter([200, 401, 404, 403])
+    _mock_llm(monkeypatch, lambda req: httpx.Response(next(codes), json={"error": {"message": "x sk-secret-123"}}))
+    async with client as c:
+        assert (await c.post("/api/ai/verify")).json()["ok"] is False        # no key
+        ok = (await c.post("/api/ai/verify", headers=HDR)).json()
+        assert ok["ok"] and "verified" in ok["message"]
+        bad = (await c.post("/api/ai/verify", headers=HDR)).json()
+        assert not bad["ok"] and "rejected" in bad["message"]
+        nomodel = (await c.post("/api/ai/verify", headers=HDR)).json()
+        assert not nomodel["ok"] and "gpt-5.6-luna" in nomodel["message"] and "sk-secret" not in nomodel["message"]
+        restricted = (await c.post("/api/ai/verify", headers=HDR)).json()
+        assert restricted["ok"] and restricted["warning"]
+        r = await c.post("/api/ai/verify", headers={**HDR, "X-AI-Provider": "bogus"})
+        assert r.status_code == 422
+
+
+def _sse_body(chunks):
+    lines = [f"data: {json.dumps({'choices': [{'delta': {'content': t}}]})}\n\n" for t in chunks]
+    return "".join(lines) + "data: [DONE]\n\n"
+
+
+async def test_chat_and_tool_stream(client, resume_pdf, monkeypatch):
+    captured = {}
+
+    def handler(request):
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, text=_sse_body(["Hello ", "world"]), headers={"content-type": "text/event-stream"})
+
+    _mock_llm(monkeypatch, handler)
+    async with client as c:
+        body = await _analyzed(c, resume_pdf)
+        aid = body["analysis_id"]
+        msgs = {"messages": [{"role": "user", "content": "What should I learn?"}], "job_id": "0"}
+        assert (await c.post(f"/api/analysis/{aid}/chat", json=msgs)).status_code == 401     # no key
+        r = await c.post(f"/api/analysis/{aid}/chat", json=msgs, headers=HDR)
+        assert r.status_code == 200 and "text/event-stream" in r.headers["content-type"]
+        pieces = [json.loads(l[6:])["t"] for l in r.text.splitlines() if l.startswith("data: {")]
+        assert "".join(pieces) == "Hello world" and "data: [DONE]" in r.text
+        system = captured["body"]["messages"][0]["content"]
+        assert "<resume>" in system and "Jane Doe" in system and "<job>" in system and "Data Engineer" in system
+        assert captured["body"]["stream"] is True
+
+        bad = {"messages": [{"role": "assistant", "content": "hi"}]}
+        assert (await c.post(f"/api/analysis/{aid}/chat", json=bad, headers=HDR)).status_code == 422
+
+        t = await c.post(f"/api/analysis/{aid}/tool", json={"job_id": "0", "kind": "cover_letter"}, headers=HDR)
+        assert "world" in t.text and "[DONE]" in t.text and "cover letter" in captured["body"]["messages"][-1]["content"].lower()
+        assert (await c.post(f"/api/analysis/{aid}/tool", json={"job_id": "0", "kind": "nope"}, headers=HDR)).status_code == 422
+
+
+async def test_stream_error_event(client, resume_pdf, monkeypatch):
+    _mock_llm(monkeypatch, lambda req: httpx.Response(429, json={"error": {"message": "quota"}}))
+    async with client as c:
+        aid = (await _analyzed(c, resume_pdf))["analysis_id"]
+        r = await c.post(f"/api/analysis/{aid}/chat", headers=HDR,
+                         json={"messages": [{"role": "user", "content": "hi"}]})
+    assert "event: error" in r.text and "rate limit" in r.text.lower()
+
+
+async def test_anthropic_stream_and_complete(monkeypatch):
+    cfg = llm.LLMConfig("anthropic", "ak-1", "claude-sonnet-5-5")
+    sse = "".join(f"event: x\ndata: {json.dumps(e)}\n\n" for e in [
+        {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "Hi "}},
+        {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "there"}},
+        {"type": "message_stop"}])
+    seen = {}
+
+    def handler(request):
+        seen["h"] = dict(request.headers)
+        payload = json.loads(request.content)
+        if payload["stream"]:
+            return httpx.Response(200, text=sse)
+        return httpx.Response(200, json={"content": [{"type": "text", "text": "done"}]})
+
+    _mock_llm(monkeypatch, handler)
+    out = [p async for p in llm.stream(cfg, "sys", [{"role": "user", "content": "q"}])]
+    assert "".join(out) == "Hi there" and seen["h"]["x-api-key"] == "ak-1"
+    assert await llm.complete(cfg, "sys", [{"role": "user", "content": "q"}]) == "done"

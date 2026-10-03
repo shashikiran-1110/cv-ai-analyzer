@@ -115,3 +115,23 @@ def category_of(skill: str) -> str:
 
 def extract_skills(text: str) -> set[str]:
     return {canon for canon, _, pat in _compiled() if pat.search(text)}
+
+
+@lru_cache(maxsize=1)
+def _lookup() -> dict[str, str]:
+    out = {}
+    for skills in _RAW.values():
+        for canon, aliases in skills.items():
+            out[canon.lower()] = canon
+            for a in aliases:
+                out.setdefault(a.lower(), canon)
+    return out
+
+
+def canonical(name: str) -> str | None:
+    """Map a user-typed skill (any alias, any case) to its canonical name, or None if unknown."""
+    return _lookup().get(name.strip().lower())
+
+
+def all_skills() -> list[dict]:
+    return sorted(({"name": n, "category": c} for c, sk in _RAW.items() for n in sk), key=lambda x: x["name"].lower())

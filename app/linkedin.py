@@ -19,6 +19,10 @@ from . import config
 SEARCH_URL = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
 DETAIL_URL = "https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{job_id}"
 PAGE_SIZE = 10
+# UI value -> LinkedIn filter code
+EXPERIENCE = {"internship": "1", "entry": "2", "associate": "3", "mid_senior": "4", "director": "5", "executive": "6"}
+JOB_TYPES = {"full_time": "F", "part_time": "P", "contract": "C", "temporary": "T", "internship": "I", "other": "O"}
+WORKPLACE = {"on_site": "1", "remote": "2", "hybrid": "3"}
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -155,6 +159,11 @@ async def search_jobs(
     hours: Optional[int] = None,
     on_progress: Optional[ProgressCb] = None,
     client: Optional[httpx.AsyncClient] = None,
+    *,
+    experience: Optional[list[str]] = None,
+    job_types: Optional[list[str]] = None,
+    workplace: Optional[list[str]] = None,
+    sort: str = "recent",
 ) -> list[Job]:
     """Search, page through results, then fetch each job's full description."""
     count = max(1, min(count, config.MAX_JOBS))
@@ -169,6 +178,12 @@ async def search_jobs(
         params = {"keywords": title, "location": location, "start": 0}
         if hours:
             params["f_TPR"] = f"r{int(hours) * 3600}"
+        for key, vals, table in (("f_E", experience, EXPERIENCE), ("f_JT", job_types, JOB_TYPES),
+                                 ("f_WT", workplace, WORKPLACE)):
+            codes = [table[v] for v in (vals or []) if v in table]
+            if codes:
+                params[key] = ",".join(codes)
+        params["sortBy"] = "R" if sort == "relevant" else "DD"
         jobs: dict[str, Job] = {}
         start, empty_pages = 0, 0
         while len(jobs) < count and start < 1000 and empty_pages < 2:

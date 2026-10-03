@@ -102,8 +102,8 @@ class ResumeProfile:
     head: str
 
     @classmethod
-    def build(cls, text: str, years: float) -> "ResumeProfile":
-        return cls(text=text, skills=sk.extract_skills(text), years=years, head=text[:400])
+    def build(cls, text: str, years: float, extra_skills: set[str] | None = None) -> "ResumeProfile":
+        return cls(text=text, skills=sk.extract_skills(text) | (extra_skills or set()), years=years, head=text[:400])
 
 
 def score_job(job: dict, profile: ResumeProfile) -> dict:
