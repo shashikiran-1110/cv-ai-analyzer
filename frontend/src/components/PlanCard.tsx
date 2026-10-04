@@ -1,3 +1,4 @@
+import { Sparkles } from "lucide-react";
 import { useState } from "react";
 import { useAi } from "../ai";
 import { post } from "../api";
@@ -33,7 +34,7 @@ export function PlanCard({ params, onApply }: { params: SearchParams; onApply: (
       <div className="plan-row">
         <input value={intent} onChange={(e) => setIntent(e.target.value)} maxLength={500} aria-label="Describe the role"
           placeholder="Or describe it: “senior ML engineer, Bangalore or remote”" onKeyDown={(e) => { if (e.key === "Enter" && intent.trim().length > 2) { e.preventDefault(); void make(); } }} />
-        <button type="button" className="btn small" disabled={busy || intent.trim().length < 3} onClick={make}>{busy ? "Planning…" : ai.usable ? "✦ Plan with AI" : "Plan"}</button>
+        <button type="button" className="btn small" disabled={busy || intent.trim().length < 3} onClick={make}>{busy ? "Planning…" : ai.usable ? <><Sparkles aria-hidden="true" />Plan with AI</> : "Plan"}</button>
       </div>
       {err && <Alert>{err}</Alert>}
       {plan && (

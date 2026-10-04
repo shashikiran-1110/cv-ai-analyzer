@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useAi } from "../ai";
 import { post, streamPost } from "../api";
 import type { ChatMsg, ScoredJob } from "../types";
+import { Feedback } from "./Feedback";
 import { CopyButton, Markdown } from "./Markdown";
 import { Alert } from "./ui";
 
@@ -109,7 +110,7 @@ export function AssistantTab({ analysisId, jobs }: { analysisId: string; jobs: S
             {m.role === "assistant" ? (m.content ? <Markdown text={m.content} /> : <span className="typing">{live.length ? `Thinking… (${live.map((t) => TOOL_LABEL[t] ?? t).join(", ")})` : "Thinking…"}</span>) : <p>{m.content}</p>}
             {meta[i]?.tools && meta[i].tools!.length > 0 && <div className="tool-chips">{meta[i].tools!.map((t, k) => <span key={k} className="chip">{TOOL_LABEL[t] ?? t}</span>)}</div>}
             {meta[i]?.unverified && meta[i].unverified!.length > 0 && <small className="warn-text" data-testid="unverified">Numbers not found in the app's data: {meta[i].unverified!.join(", ")}. Double-check them.</small>}
-            {m.role === "assistant" && m.content && !(busy && i === msgs.length - 1) && <CopyButton text={m.content} />}
+            {m.role === "assistant" && m.content && !(busy && i === msgs.length - 1) && <div className="actions" style={{ marginTop: 6, gap: 4 }}><CopyButton text={m.content} /><Feedback target={{ kind: mode === "coach" ? "coach" : "assistant", analysisId, itemId: `${i}:${msgs[i - 1]?.content.slice(0, 200) ?? ""}`, output: m.content }} label="this reply" /></div>}
           </div>
         ))}
         <div ref={end} />

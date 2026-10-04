@@ -181,6 +181,38 @@ def test_full_flow(server, browser, resume_pdf):
     expect(page.locator(".bubble.assistant")).to_contain_text("Where you stand", timeout=15000)
     expect(page.locator("[data-testid=unverified]")).to_contain_text("99")
 
+    # jobs table: bulk-select two rows and compare them; full job page with the posting beside the analysis
+    page.goto(report_url.split("?")[0] + "?tab=jobs")
+    boxes = page.locator("table.dt tbody tr input[type=checkbox]")
+    boxes.nth(0).check()
+    boxes.nth(1).check()
+    expect(page.locator(".bulkbar")).to_contain_text("2 selected")
+    page.click(".bulkbar button:has-text('Compare')")
+    expect(page.locator("h1#h-compare")).to_contain_text("Compare 2 jobs", timeout=5000)
+    page.locator(".cmp thead a").first.click()
+    expect(page.locator("h1#h-job")).to_be_visible(timeout=5000)
+    expect(page.locator(".split [data-testid=posting]")).to_be_visible(timeout=5000)
+    page.locator(".matrix tbody tr").first.click()
+    # a requirement-status correction re-scores the job and is logged as feedback
+    page.locator(".matrix tbody tr").first.locator("select[aria-label='Correct this status']").select_option(index=1)
+    expect(page.locator(".toast", has_text="the score was updated")).to_have_count(1, timeout=5000)
+
+    # command palette: jump to a page by typing
+    page.keyboard.press("Control+k")
+    expect(page.locator(".cmdk")).to_be_visible()
+    page.keyboard.type("Reports")
+    page.keyboard.press("Enter")
+    expect(page.locator("h1#h-reports")).to_be_visible(timeout=5000)
+    expect(page.locator(".list > li").first).to_be_visible()
+
+    # Eval Studio: defense invariants and a mock run from the UI
+    page.click(".side-nav a:has-text('Eval Studio')")
+    expect(page.locator("h1#h-eval")).to_be_visible(timeout=5000)
+    page.locator("tr:has-text('llm_safety') button:has-text('Mock')").click()
+    expect(page.locator(".toast", has_text="llm_safety")).to_have_count(1, timeout=30000)
+    page.click(".tabs button:has-text('Labelling')")
+    expect(page.locator(".label-btns")).to_be_visible(timeout=5000)
+
     # Phase 6: save to tracker, watch this search, kanban, watches, market
     page.goto(report_url.split("?")[0] + "?tab=jobs")
     page.locator(".r-head").first.click()
@@ -189,27 +221,23 @@ def test_full_flow(server, browser, resume_pdf):
     page.keyboard.press("Escape")
     page.click("[data-testid=watch-search]")
     expect(page.locator(".toast", has_text="Watching this search")).to_have_count(1, timeout=5000)
-    page.click("[data-testid=menu]")
-    page.click(".menu-pop a:has-text('Applications')")
+    page.click(".side-nav a:has-text('Applications')")
     expect(page.locator(".kcol[data-stage=saved] [data-testid=kcard]")).to_have_count(1, timeout=5000)
     page.locator("[data-testid=kcard] button[aria-label='Move right']").first.click()
     expect(page.locator(".kcol[data-stage=applied] [data-testid=kcard]")).to_have_count(1, timeout=5000)
     page.reload()
     expect(page.locator(".kcol[data-stage=applied] [data-testid=kcard]")).to_have_count(1, timeout=5000)   # persisted
-    page.click("[data-testid=menu]")
-    page.click(".menu-pop a:has-text('Watches')")
+    page.click(".side-nav a:has-text('Watches')")
     expect(page.locator("[data-testid=watch]")).to_have_count(1, timeout=5000)
     page.click("[data-testid=watch] button:has-text('Run now')")
     expect(page.locator("[data-testid=watch] .digest")).to_contain_text("new of", timeout=15000)
-    page.click("[data-testid=menu]")
-    page.click(".menu-pop a:has-text('Market insights')")
+    page.click(".side-nav a:has-text('Market')")
     page.fill("input[aria-label='Role']", "Data Engineer")
     page.click("button:has-text('Analyse')")
     expect(page.locator("[data-testid=market]")).to_contain_text("postings", timeout=8000)
 
     # settings: magic-link sign-in (demo shows the link), extension token, export
-    page.click("[data-testid=menu]")
-    page.click(".menu-pop a:has-text('Settings')")
+    page.click(".side-nav a:has-text('Settings')")
     page.fill("input[aria-label='Email']", "demo@example.com")
     page.click("button:has-text('Email me a sign-in link')")
     page.click("[data-testid=dev-link]")

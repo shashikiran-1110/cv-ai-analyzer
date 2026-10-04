@@ -1,8 +1,10 @@
+import { Sparkles } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useAi } from "../ai";
 import { api, post } from "../api";
+import { Feedback as RateAi } from "../components/Feedback";
 import { Skeleton } from "../components/Skeleton";
 import { Alert, Meter } from "../components/ui";
 import type { Analysis, PracticeEntry, PracticeHistory } from "../types";
@@ -50,7 +52,7 @@ export function InterviewPage() {
       <div className="head-row">
         <div><h1 id="h-int">Interview practice</h1><p className="lead">{job.title} · {job.company}</p></div>
         <div className="actions"><Link className="btn" to={`/analysis/${aid}?tab=jobs&job=${jobId}`}>← Back to job</Link>
-          <button className="btn primary" onClick={generate} disabled={busy} data-testid="gen-questions">{h.questions.length ? "New questions" : "✦ Generate questions"}</button></div>
+          <button className="btn primary" onClick={generate} disabled={busy} data-testid="gen-questions">{h.questions.length ? "New questions" : <><Sparkles aria-hidden="true" />Generate questions</>}</button></div>
       </div>
       {!ai.usable && <Alert kind="info">Add an AI key to generate questions and get feedback. <button className="link" onClick={() => ai.openModal(true)}>Open AI settings</button></Alert>}
       {err && <Alert>{err}</Alert>}
@@ -90,7 +92,7 @@ function Feedback({ e }: { e: PracticeEntry }) {
         <div><h4>Worked well</h4><ul className="bullets">{f.strengths.map((x, i) => <li key={i}>{x}</li>)}</ul></div>
         <div><h4>Improve</h4><ul className="bullets">{f.improvements.map((x, i) => <li key={i}>{x}</li>)}</ul></div>
       </div>
-      <h4>Stronger version</h4>
+      <h4 style={{ display: "flex", alignItems: "center" }}>Stronger version<RateAi target={{ kind: "interview_feedback", itemId: e.question_id, output: JSON.stringify(f) }} label="this feedback" /></h4>
       <blockquote className="evidence">{f.stronger_answer}</blockquote>
       {f.violations.length > 0 && <ul className="violations">{f.violations.map((v) => <li key={v}>✕ {v}</li>)}</ul>}
     </div>

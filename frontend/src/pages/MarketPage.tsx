@@ -1,3 +1,4 @@
+import { Sparkles } from "lucide-react";
 import { useState } from "react";
 import { useAi } from "../ai";
 import { api, post } from "../api";
@@ -56,7 +57,7 @@ export function MarketPage() {
             {(s.salary?.length ?? 0) > 0 && <><h2>Salary (as posted)</h2>{s.salary!.map((x) => <p key={x.currency}>{x.currency}{x.p25.toLocaleString()}–{x.currency}{x.p75.toLocaleString()} (median {x.currency}{x.median_yearly.toLocaleString()}, {x.postings} postings)</p>)}<small className="muted">{s.salary_note}</small></>}
           </div>
         </div>
-        <div className="card"><div className="head-row"><h2>AI summary</h2><button className="btn small" onClick={narrate} disabled={busy}>✦ Summarise</button></div>
+        <div className="card"><div className="head-row"><h2>AI summary</h2><button className="btn small" onClick={narrate} disabled={busy}><Sparkles aria-hidden="true" />Summarise</button></div>
           {story ? <><Markdown text={story.text} />{story.numbers_unverified.length > 0 && <small className="warn-text">Numbers not in the data: {story.numbers_unverified.join(", ")}</small>}</>
             : <p className="muted">The AI may only restate the numbers above; any number it adds is flagged.</p>}</div>
       </>}

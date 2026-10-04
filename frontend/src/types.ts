@@ -30,13 +30,13 @@ export interface SearchStatus {
 }
 export interface ReqCheck {
   id: string; text: string; preferred: boolean; coverage: number; missing: string[]; status: "met" | "partial" | "missing";
-  how?: string; via?: string[]; evidence?: string;
+  how?: string; via?: string[]; evidence?: string; user_override?: boolean;
 }
 export interface Gate { type: string; label: string; need: string; text: string; status: "pass" | "fail" | "unknown"; reason: string }
 export interface DeepReq {
   id: string; requirement: string; importance: "must" | "nice"; preferred: boolean; coverage: number;
   det_status: "met" | "partial" | "missing" | null; ai_status: "met" | "partial" | "missing" | "not assessed";
-  final_status: "met" | "partial" | "missing"; source: "ai" | "rules"; verified: boolean;
+  final_status: "met" | "partial" | "missing"; source: "ai" | "rules" | "you"; verified: boolean;
   evidence: string; claimed_evidence: string; flag: string; note: string; disagree: boolean;
 }
 export interface DeepResult {
@@ -65,7 +65,7 @@ export interface Summary {
 export interface LearnItem { skill: string; why: string; how?: string; jobs?: number | null }
 export interface Insights {
   source: string; summary: string; strengths: string[]; improvements: string[];
-  skills_to_learn: LearnItem[]; ai_error?: string;
+  skills_to_learn: LearnItem[]; ai_error?: string; unverified_numbers?: string[];
 }
 export interface Analysis {
   analysis_id: string; extra_skills: string[]; unknown_skills: string[]; query: SearchQuery;
@@ -144,4 +144,32 @@ export interface MarketStats {
   median_years_asked?: number | null; remote_pct?: number; top_companies?: { company: string; jobs: number }[];
   top_locations?: { location: string; jobs: number }[]; sources?: Record<string, number>; weekly_new?: { week: string; jobs: number }[];
   salary?: { currency: string; postings: number; median_yearly: number; p25: number; p75: number }[]; salary_note?: string;
+}
+export interface AnalysisListItem {
+  analysis_id: string; title: string; location: string; sources: string[]; created_at: number; job_count: number;
+  qualifying: number; threshold: number; avg_score: number; best_score: number; best_title: string; verified: number;
+}
+export type FeedbackKind = "requirement" | "deep_requirement" | "insights" | "coach" | "assistant" | "tool" | "tailoring_edit"
+  | "interview_feedback" | "planner" | "extractor" | "job_score";
+export interface FeedbackSummary { kind: string; total: number; up: number; down: number; corrections: number; approval: number | null }
+export interface FeedbackItem {
+  id: number; kind: string; analysis_id: string; job_id: string; item_id: string; rating: number; correction: Record<string, unknown> | null;
+  comment: string; output: string | null; model: string; promoted: number; created_at: number;
+}
+export interface EvalRun {
+  id: string; suite: string; model: string; mode: string; metrics: Record<string, number | string | null>; cost_usd: number | null;
+  latency_p50_ms: number | null; latency_p95_ms: number | null; cases: number; failed: number; git_sha: string; created_at: number;
+  prompt_versions: Record<string, string | number>;
+}
+export interface EvalCase { run_id: string; case_id: string; passed: number; detail: Record<string, unknown> }
+export interface EvalRunDetail extends EvalRun { cases_detail: EvalCase[] }
+export interface EvalOverview {
+  headline: { key: string; label: string; direction: "+" | "-"; target: number | null; value: number | null; baseline: number | null; suite: string }[];
+  suites: { suite: string; kind: "deterministic" | "llm"; description: string; last_run: EvalRun | null }[];
+  leaderboard: { model: string; suite: string; quality: number | null; quality_metric: string; cost_per_100: number | null; p95_ms: number | null; runs: number }[];
+  labels: { pairs_total: number; reviewed: number; queue: number; double_labelled: number; kappa: number | null };
+}
+export interface LabelItem {
+  id: string; occupation?: string; synthetic?: boolean; resume: string; job_title: string; job_description: string;
+  prelabels: { model: string; label: string; rationale?: string }[]; label?: string; reviewed?: boolean; reason?: string;
 }

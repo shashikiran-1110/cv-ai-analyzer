@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api";
+import { StatusIcon } from "../components/Icons";
 import { SkillPicker } from "../components/SkillPicker";
 import { Skeleton } from "../components/Skeleton";
 import { useToast } from "../components/Toast";
@@ -180,7 +181,7 @@ export function ProfilePage() {
             <h2>Readability check <span className="tag ai">{okCount}/{v.formatting.length}</span></h2>
             <p className="muted">How applicant tracking systems are likely to read this file.</p>
             <ul className="checklist">{v.formatting.map((c) => (
-              <li key={c.label}><span aria-hidden="true">{c.ok ? "✅" : "⚠️"}</span><b>{c.label}</b><span>{c.detail}</span></li>))}</ul>
+              <li key={c.label}><StatusIcon s={c.ok ? "ok" : "warn"} /><b>{c.label}</b><span>{c.detail}</span></li>))}</ul>
           </div>
         </div>
       </div>

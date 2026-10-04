@@ -1,3 +1,4 @@
+import { ChevronRight, CircleCheck, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
@@ -60,7 +61,7 @@ export function ResumeCard({ value, onChange }: { value: ResumeState; onChange: 
   const p = value.preview;
   return (
     <div className="card setup-card">
-      <div className="card-head"><span className="num">1</span><div><h2>Your resume</h2><small>PDF or pasted text · kept for 7 days, delete any time in Settings</small></div></div>
+      <div className="card-head"><span className={`num ${resumeReady(value) ? "done" : ""}`}>1</span><div><h2>Your resume</h2><small>PDF or pasted text · kept for 7 days, delete any time in Settings</small></div></div>
       <div className="seg narrow" role="tablist" aria-label="Resume input">
         {(["pdf", "paste"] as const).map((m) => (
           <button key={m} role="tab" type="button" aria-selected={value.mode === m} aria-checked={value.mode === m}
@@ -75,7 +76,7 @@ export function ResumeCard({ value, onChange }: { value: ResumeState; onChange: 
           onDragOver={(e) => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)}
           onDrop={(e) => { e.preventDefault(); setOver(false); pick(e.dataTransfer.files[0]); }}>
           <input ref={input} type="file" accept="application/pdf,.pdf" hidden onChange={(e) => { pick(e.target.files?.[0]); e.target.value = ""; }} />
-          <div className="drop-icon" aria-hidden="true">⇪</div>
+          <div className="drop-icon" aria-hidden="true"><Upload /></div>
           <div>{value.file ? <><b>{value.file.name}</b> · {(value.file.size / 1024).toFixed(0)} KB · click to replace</>
             : value.fileName && value.resumeId ? <><b>{value.fileName}</b> · saved · click to replace</>
             : <><b>Drop your CV / resume PDF here</b> or click to browse</>}</div>
@@ -91,7 +92,7 @@ export function ResumeCard({ value, onChange }: { value: ResumeState; onChange: 
       {err && <Alert>{err}</Alert>}
       {p && !busy && (
         <div className="preview" data-testid="resume-preview">
-          <div className="preview-head"><b>✓ Resume read</b><small>{p.words} words · ~{p.years ? p.years.toFixed(1) : "?"} yrs experience · {p.education ?? "no degree found"}</small></div>
+          <div className="preview-head"><b><CircleCheck aria-hidden="true" />Resume read</b><small>{p.words} words · ~{p.years ? p.years.toFixed(1) : "?"} yrs experience · {p.education ?? "no degree found"}</small></div>
           <div className="chips">{p.skills.slice(0, 24).map((s) => <span className="chip ok" key={s}>{s}</span>)}
             {p.skills.length > 24 && <span className="chip">+{p.skills.length - 24} more</span>}
             {p.skills.length === 0 && <span className="muted">No known skills detected; matching will rely on keywords.</span>}</div>
@@ -106,7 +107,7 @@ export function ResumeCard({ value, onChange }: { value: ResumeState; onChange: 
           </details>
         </div>
       )}
-      <button type="button" className="link" onClick={() => setShowExtra(!showExtra)} aria-expanded={showExtra}>{showExtra ? "▾" : "▸"} Skills you have that aren't on your resume{value.extra.length ? ` (${value.extra.length})` : ""}</button>
+      <button type="button" className="disclosure" onClick={() => setShowExtra(!showExtra)} aria-expanded={showExtra}><ChevronRight aria-hidden="true" />Skills you have that aren't on your resume{value.extra.length ? ` (${value.extra.length})` : ""}</button>
       {showExtra && <SkillPicker value={value.extra} onChange={(extra) => onChange({ ...value, extra })} />}
     </div>
   );

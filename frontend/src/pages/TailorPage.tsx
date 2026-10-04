@@ -1,8 +1,10 @@
+import { Sparkles } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useAi } from "../ai";
 import { api, ApiError, post } from "../api";
+import { Feedback } from "../components/Feedback";
 import { Skeleton } from "../components/Skeleton";
 import { useToast } from "../components/Toast";
 import { Alert } from "../components/ui";
@@ -124,7 +126,7 @@ export function TailorPage() {
         <aside className="card agent-card">
           <h2>Assistant</h2>
           {!run && <><p className="muted">It reads the job's requirements and your bullets, then proposes up to 8 edits with reasons.</p>
-            <button className="btn primary" onClick={start} disabled={busy} data-testid="start-tailor">{ai.usable ? "✦ Start tailoring" : "Add an AI key to start"}</button></>}
+            <button className="btn primary" onClick={start} disabled={busy} data-testid="start-tailor">{ai.usable ? <><Sparkles aria-hidden="true" />Start tailoring</> : "Add an AI key to start"}</button></>}
           {run && <ol className="steps">
             {steps.filter((s) => s.kind === "tool" || s.kind === "answer").map((s, i) => (
               <li key={i} className={s.error ? "err" : ""}><span className="dot" aria-hidden="true" />
@@ -160,7 +162,8 @@ export function TailorPage() {
                   <div className="new"><small>Proposed (editable)</small>
                     <textarea rows={3} value={d.text} onChange={(x) => setDrafts({ ...drafts, [e.bullet_id]: { ...d, text: x.target.value } })} /></div>
                 </div>
-                {e.rationale && <small className="muted">Why: {e.rationale}</small>}
+                <div className="actions" style={{ gap: 4 }}>{e.rationale && <small className="muted">Why: {e.rationale}</small>}
+                  <Feedback target={{ kind: "tailoring_edit", analysisId: aid, jobId, itemId: e.bullet_id, output: JSON.stringify({ original: e.original, proposed: e.new_text, violations: e.violations }) }} label="this edit" /></div>
                 {v.length > 0 && <ul className="violations">{v.map((x) => <li key={x}>✕ {x}</li>)}</ul>}
               </div>);
           })}

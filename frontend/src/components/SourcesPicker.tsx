@@ -87,7 +87,7 @@ export function SourcesPicker({ value, onChange }: { value: SourceConfig; onChan
 
   return (
     <div className="card setup-card">
-      <div className="card-head"><span className="num">3</span><div><h2>Where to look</h2><small>More sources = more postings. Each source fails independently.</small></div></div>
+      <div className="card-head"><span className={`num ${sourcesProblem(value) ? "" : "done"}`}>3</span><div><h2>Where to look</h2><small>More sources = more postings. Each source fails independently.</small></div></div>
       <div className="seg narrow" role="tablist" aria-label="Job source mode">
         {([["portals", "Search job portals"], ["paste", "Paste jobs"], ["sample", "Sample jobs"]] as const).map(([m, l]) => (
           <button key={m} type="button" role="tab" aria-selected={value.mode === m} aria-checked={value.mode === m} onClick={() => set({ mode: m })}>{l}</button>
