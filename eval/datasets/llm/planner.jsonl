@@ -1,0 +1,8 @@
+{"id": "pl-data", "intent": "senior data engineer in London", "ok_terms": ["data", "analytics", "etl", "platform", "pipeline", "big data"], "synthetic": true}
+{"id": "pl-icu", "intent": "registered nurse ICU, nights", "ok_terms": ["nurse", "rn", "critical", "icu", "nursing", "intensive"], "synthetic": true}
+{"id": "pl-ux", "intent": "product designer, remote in Europe", "ok_terms": ["design", "ux", "ui", "product", "interaction"], "synthetic": true}
+{"id": "pl-acct", "intent": "staff accountant", "ok_terms": ["account", "finance", "bookkeep", "audit", "ledger", "controller"], "synthetic": true}
+{"id": "pl-logi", "intent": "logistics coordinator near Seattle", "ok_terms": ["logistic", "supply", "freight", "shipping", "transport", "warehouse", "operations", "dispatch"], "synthetic": true}
+{"id": "pl-fe", "intent": "frontend react developer", "ok_terms": ["front", "react", "ui", "web", "javascript", "software", "typescript"], "synthetic": true}
+{"id": "pl-teach", "intent": "secondary school maths teacher", "ok_terms": ["teach", "math", "education", "tutor", "instructor", "lecturer"], "synthetic": true}
+{"id": "pl-para", "intent": "corporate paralegal", "ok_terms": ["paralegal", "legal", "law", "litigation", "corporate", "contracts"], "synthetic": true}

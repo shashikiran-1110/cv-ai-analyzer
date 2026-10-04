@@ -5,7 +5,13 @@
     python -m eval.run --check               # exit 1 if any headline metric regresses vs eval/baseline.json
     python -m eval.run --update-baseline     # accept current metrics as the new baseline (do this deliberately)
 
-Suites: skills, experience, education, location, requirements, fairness, match (needs labelled pairs).
+    python -m eval.run --suite llm --mode mock          # LLM suites against the adversarial mock (CI)
+    python -m eval.run --suite llm_deep_verify --mode record --model gpt-5.6-luna   # real model, save cassettes
+    python -m eval.run --suite llm_deep_verify --mode replay                        # re-run saved responses (free)
+
+Deterministic suites: skills, experience, education, location, requirements, gates, agents, fairness, match.
+LLM suites (eval/llm/suites.py): llm_deep_verify, llm_consistency, llm_extractor, llm_safety, llm_planner,
+llm_interview, llm_coach, llm_insights, llm_tailoring, llm_judge.
 """
 from __future__ import annotations
 
@@ -31,6 +37,7 @@ HEADLINE = {
     "education.accuracy": ("+", 0.0), "location.accuracy": ("+", 0.0),
     "gates.f1": ("+", 0.01), "agents.fabrications_missed": ("-", 0.0), "agents.guard_f1": ("+", 0.01), "skills.f1_nontech": ("+", 0.02),
     "requirements.f1": ("+", 0.01), "requirements.holdout_f1": ("+", 0.01), "fairness.identical_rate": ("+", 0.0),
+    "evidence.accuracy": ("+", 0.0), "evidence.false_accepts": ("-", 0.0),
 }
 
 
@@ -200,6 +207,21 @@ def suite_agents() -> dict:
                         "fabrications_missed": fn, "faithful_blocked": fp, "cases": tp + fp + fn + tn}, "failures": fails}
 
 
+def suite_evidence() -> dict:
+    """Deep-verifier quote relevance (app/deepmatch.evidence_relevant): a real resume quote must be *about* the
+    requirement. Pairs were found by the llm_safety / llm_deep_verify evals (e.g. a BLS card "proving" ACLS)."""
+    from app import deepmatch
+    ok, fails, fa, fr = [], [], 0, 0
+    for c in _load("evidence_relevance.jsonl"):
+        got = deepmatch.evidence_relevant(c["quote"], c["requirement"])
+        ok.append(got == c["relevant"])
+        fa += got and not c["relevant"]
+        fr += (not got) and c["relevant"]
+        if got != c["relevant"]:
+            fails.append({"requirement": c["requirement"], "quote": c["quote"], "expected": c["relevant"], "got": got, "why": c["why"]})
+    return {"metrics": {"accuracy": M.accuracy(ok), "false_accepts": fa, "false_rejects": fr, "cases": len(ok)}, "failures": fails}
+
+
 def suite_match() -> dict:
     """Score vs human label on labelled resume–job pairs (eval/datasets/match/pairs.jsonl). See its README."""
     pairs = [p for p in _load("match/pairs.jsonl") if p.get("label") and p.get("reviewed")]
@@ -222,22 +244,73 @@ def suite_match() -> dict:
 
 SUITES = {"skills": suite_skills, "experience": suite_experience, "education": suite_education,
           "location": suite_location, "requirements": suite_requirements, "gates": suite_gates, "agents": suite_agents,
-          "fairness": suite_fairness,
+          "fairness": suite_fairness, "evidence": suite_evidence,
           "match": suite_match}
 
 
-def run(names: list[str]) -> dict:
-    return {n: SUITES[n]() for n in names}
+DETERMINISTIC = list(SUITES)
+# Real-model quality gates, compared per model against eval/baseline.real.json ("suite@model.metric").
+REAL_HEADLINE = {"llm_deep_verify.final_accuracy": ("+", 0.03), "llm_deep_verify.hallucinated_quote_rate": ("-", 0.05),
+                 "llm_extractor.f1": ("+", 0.03), "llm_safety.raw_compliance_rate": ("-", 0.1),
+                 "llm_planner.title_ok_rate": ("+", 0.1), "llm_interview.grade_spearman": ("+", 0.1),
+                 "llm_judge.pairwise_accuracy": ("+", 0.1), "llm_consistency.final_agreement": ("+", 0.05)}
+BASELINE_REAL = ROOT / "baseline.real.json"
+
+
+def _llm_suites() -> list[str]:
+    from .llm.suites import SUITES as LLM
+    return list(LLM)
+
+
+def _defense_headline() -> dict:
+    from .llm.suites import DEFENSE_METRICS
+    return {f"{s}.{m}": ("-", 0.0) for s, ms in DEFENSE_METRICS.items() for m in ms}
+
+
+def run(names: list[str], mode: str = "mock", *, model: str = "", provider: str = "", judge_model: str = "",
+        repeats: int | None = None, limit: int | None = None, persist: bool = True) -> dict:
+    import time
+    import uuid
+    out = {}
+    for n in names:
+        if n.startswith("llm_"):
+            from .llm.runner import run_suite
+            out[n] = run_suite(n, mode, provider=provider, model=model, judge_model=judge_model, repeats=repeats,
+                               limit=limit, persist=persist)
+            continue
+        t0 = time.time()
+        out[n] = SUITES[n]()
+        if persist:
+            _persist_deterministic(n, out[n], t0, uuid.uuid4().hex)
+    return out
+
+
+def _persist_deterministic(name: str, r: dict, t0: float, run_id: str) -> None:
+    try:
+        from app.storage import db
+        from .llm.runner import _git_sha
+        db.save_eval_run({"id": run_id, "suite": name, "model": "rules", "mode": "deterministic", "metrics": r["metrics"],
+                          "prompt_versions": {}, "cost_usd": 0.0, "latency_p50_ms": None, "latency_p95_ms": None,
+                          "cases": r["metrics"].get("cases", 0) or 0, "failed": len(r["failures"]), "git_sha": _git_sha(),
+                          "created_at": t0},
+                         [{"case_id": f"failure-{i}", "passed": False, "detail": f} for i, f in enumerate(r["failures"][:200])])
+    except Exception as e:      # persistence is a convenience; never fail an eval run on it
+        print(f"(could not save {name} run: {type(e).__name__})", file=sys.stderr)
 
 
 def flatten(results: dict) -> dict[str, float]:
-    return {f"{s}.{k}": v for s, r in results.items() for k, v in r["metrics"].items()}
+    flat = {}
+    for s, r in results.items():
+        run_ = r.get("run") or {}
+        tag = s if not run_ or run_.get("mode") == "mock" else f"{s}@{run_.get('model')}"
+        flat.update({f"{tag}.{k}": v for k, v in r["metrics"].items()})
+    return flat
 
 
-def compare(current: dict[str, float], baseline: dict[str, float]) -> list[str]:
+def compare(current: dict[str, float], baseline: dict[str, float], headline: dict | None = None) -> list[str]:
     regressions = []
-    for key, (direction, tol) in HEADLINE.items():
-        if key not in baseline or key not in current:
+    for key, (direction, tol) in (headline or {**HEADLINE, **_defense_headline()}).items():
+        if key not in baseline or key not in current or current[key] is None or baseline[key] is None:
             continue
         cur, base = current[key], baseline[key]
         worse = (base - cur) if direction == "+" else (cur - base)
@@ -246,46 +319,82 @@ def compare(current: dict[str, float], baseline: dict[str, float]) -> list[str]:
     return regressions
 
 
+def _real_headline(current: dict) -> dict:
+    """Expand REAL_HEADLINE to the model-tagged keys present in this run."""
+    out = {}
+    for key in current:
+        if "@" not in key:
+            continue
+        suite_model, metric = key.rsplit(".", 1)
+        suite = suite_model.split("@", 1)[0]
+        if f"{suite}.{metric}" in REAL_HEADLINE:
+            out[key] = REAL_HEADLINE[f"{suite}.{metric}"]
+    return out
+
+
 def report(results: dict, regressions: list[str]) -> str:
     out = [f"# Eval report — {date.today().isoformat()}", "",
-           "Deterministic suites (no network, no LLM). Gold labels are in `eval/datasets/`.", "",
-           "| Suite | Metric | Value | Baseline |", "|---|---|---|---|"]
-    base = json.loads(BASELINE.read_text()) if BASELINE.exists() else {}
+           "Deterministic suites need no network or LLM. LLM suites (`llm_*`) list their mode: **mock** uses a scripted adversarial "
+           "model to prove the server-side defenses hold; **record / replay / live** measure a real model. "
+           "Gold labels are in `eval/datasets/`.", "",
+           "| Suite | Mode / model | Metric | Value | Baseline |", "|---|---|---|---|---|"]
+    base = {**(json.loads(BASELINE.read_text()) if BASELINE.exists() else {}),
+            **(json.loads(BASELINE_REAL.read_text()) if BASELINE_REAL.exists() else {})}
     for s, r in results.items():
+        run_ = r.get("run") or {}
+        tag = s if not run_ or run_.get("mode") == "mock" else f"{s}@{run_.get('model')}"
+        mm = f"{run_.get('mode')} · {run_.get('model')}" if run_ else "deterministic"
         for k, v in r["metrics"].items():
-            out.append(f"| {s} | {k} | {v} | {base.get(f'{s}.{k}', '—')} |")
+            out.append(f"| {s} | {mm} | {k} | {v} | {base.get(f'{tag}.{k}', '—')} |")
+        if run_:
+            out.append(f"| {s} | {mm} | cost_usd | {run_.get('cost_usd')} | — |")
     out += ["", "## Regressions vs baseline", ""] + ([f"- {x}" for x in regressions] or ["None."])
     for s, r in results.items():
         if r.get("skipped"):
             out += ["", f"## {s}: skipped", "", r["skipped"]]
         if r["failures"]:
             out += ["", f"## {s}: {len(r['failures'])} failing case(s)", ""]
-            out += [f"- `{json.dumps(f, ensure_ascii=False)}`" for f in r["failures"]]
+            out += [f"- `{json.dumps(f, ensure_ascii=False, default=str)}`" for f in r["failures"]]
     return "\n".join(out) + "\n"
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--suite", default="all", help="comma-separated suites or 'all'")
+    ap.add_argument("--suite", default="all", help="comma-separated suites, or 'all' | 'deterministic' | 'llm'")
+    ap.add_argument("--mode", default="mock", choices=["mock", "record", "replay", "live"], help="how LLM suites call the model")
+    ap.add_argument("--model", default="", help="model for LLM suites (record/live: default AI_MODEL or the provider default)")
+    ap.add_argument("--provider", default="", help="openai | anthropic (record/live)")
+    ap.add_argument("--judge-model", default="", help="judge model for judge-scored suites (default: same model)")
+    ap.add_argument("--repeats", type=int, default=None, help="override repeats per case (consistency)")
+    ap.add_argument("--limit", type=int, default=None, help="only the first N cases per LLM suite")
+    ap.add_argument("--no-persist", action="store_true", help="don't save runs for Eval Studio")
     ap.add_argument("--out", help="write a Markdown report here")
-    ap.add_argument("--check", action="store_true", help="exit 1 on regression vs eval/baseline.json")
+    ap.add_argument("--check", action="store_true", help="exit 1 on regression vs the baselines")
     ap.add_argument("--update-baseline", action="store_true")
     a = ap.parse_args(argv)
-    names = list(SUITES) if a.suite == "all" else [s.strip() for s in a.suite.split(",")]
-    results = run(names)
+    names = (DETERMINISTIC + _llm_suites() if a.suite == "all" else DETERMINISTIC if a.suite == "deterministic"
+             else _llm_suites() if a.suite == "llm" else [s.strip() for s in a.suite.split(",")])
+    results = run(names, a.mode, model=a.model, provider=a.provider, judge_model=a.judge_model, repeats=a.repeats,
+                  limit=a.limit, persist=not a.no_persist)
     flat = flatten(results)
     baseline = json.loads(BASELINE.read_text()) if BASELINE.exists() else {}
-    regressions = compare(flat, baseline)
+    real = json.loads(BASELINE_REAL.read_text()) if BASELINE_REAL.exists() else {}
+    regressions = compare(flat, baseline) + compare(flat, real, _real_headline(flat))
     for s, r in results.items():
         shown = ", ".join(f"{k}={v}" for k, v in r["metrics"].items())
-        print(f"{s:13} {shown}{'  (skipped)' if r.get('skipped') else ''}  failing={len(r['failures'])}")
+        mode = f" [{r['run']['mode']}·{r['run']['model']}]" if r.get("run") else ""
+        print(f"{s:16}{mode} {shown}{'  (skipped)' if r.get('skipped') else ''}  failing={len(r['failures'])}")
     if a.out:
         Path(a.out).parent.mkdir(parents=True, exist_ok=True)
         Path(a.out).write_text(report(results, regressions))
         print(f"report → {a.out}")
     if a.update_baseline:
-        BASELINE.write_text(json.dumps({k: v for k, v in flat.items() if k in HEADLINE}, indent=2, sort_keys=True) + "\n")
-        print(f"baseline updated → {BASELINE}")
+        keep = {**HEADLINE, **_defense_headline()}
+        BASELINE.write_text(json.dumps({**baseline, **{k: v for k, v in flat.items() if k in keep}}, indent=2, sort_keys=True) + "\n")
+        realk = _real_headline(flat)
+        if realk:
+            BASELINE_REAL.write_text(json.dumps({**real, **{k: v for k, v in flat.items() if k in realk}}, indent=2, sort_keys=True) + "\n")
+        print(f"baseline updated → {BASELINE}" + (f" and {BASELINE_REAL}" if realk else ""))
     if regressions:
         print("REGRESSIONS:\n  " + "\n  ".join(regressions))
         return 1 if a.check else 0

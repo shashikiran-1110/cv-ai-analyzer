@@ -34,7 +34,7 @@ def test_related_skill_gets_partial_credit_with_explanation():
 
 def test_domain_packs_extract_non_tech_without_tech_false_positives():
     nurse = sk.extract_skills("Registered nurse, ICU. BLS and ACLS certified. Medication administration and patient triage.")
-    assert {"Nursing", "Critical Care", "BLS/ACLS", "Medication Administration", "Triage"} <= nurse
+    assert {"Nursing", "Critical Care", "BLS", "ACLS", "Medication Administration", "Triage"} <= nurse
     assert sk.extract_skills("We triage incoming bugs; pre-tax benefits and payroll deduction; framing the problem.") == set()
     acct = sk.extract_skills("Month-end close, bank reconciliations, accounts payable and VAT returns in Xero")
     assert {"Reconciliation", "Accounts Payable", "Tax", "Bookkeeping"} <= acct

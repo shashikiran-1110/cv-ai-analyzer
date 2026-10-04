@@ -7,7 +7,10 @@ PACKS: dict[str, dict[str, list[str]]] = {
     "Healthcare": {
         "Nursing": ["nursing", "nurse", "registered nurse", "staff nurse", "rn license", "rn licensure"],
         "Medication Administration": ["medication administration", "administering medications", "administer medications"],
-        "BLS/ACLS": ["bls", "acls", "basic life support", "advanced cardiac life support", "pals certification"],
+        # separate certifications: a BLS card does not prove ACLS (found by the llm_safety eval)
+        "BLS": ["bls", "basic life support"],
+        "ACLS": ["acls", "advanced cardiac life support"],
+        "PALS": ["pals certification", "pals certified", "pediatric advanced life support"],
         "Patient Assessment": ["patient assessment", "patient assessments", "clinical assessment", "vital signs"],
         "Triage": ["patient triage", "triage nurse", "emergency triage", "triage patients"],
         "Phlebotomy": ["phlebotomy", "venipuncture", "blood draws"],

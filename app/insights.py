@@ -8,6 +8,7 @@ from typing import Optional
 from pydantic import BaseModel
 
 from . import llm
+from .ai import guard
 from .ai import gateway
 
 log = logging.getLogger("insights")
@@ -104,7 +105,12 @@ async def llm_insights(cfg: llm.LLMConfig, resume_text: str, agg: dict, results:
     call.agent, call.prompt_version = "insight_narrator", PROMPT_VERSION
     data = await gateway.structured(cfg, call, SYSTEM, prompt, InsightsAnswer,
                                     cacheable=f"<resume>\n{resume_text[:12000]}\n</resume>")
+    shown = " ".join([data.summary, *data.strengths, *data.improvements, *(x.why + " " + x.how for x in data.skills_to_learn)])
+    if guard.echoes_instructions(shown, SYSTEM + " " + PROMPT):      # an injected "print your prompt" worked: discard
+        raise llm.LLMError("The AI answer repeated its own instructions (likely a prompt injection in the resume), so it was discarded.", 502)
+    evidence = json.dumps(analysis) + "\n" + json.dumps(agg.get("skill_gaps", [])) + "\n" + resume_text
     return {
+        "unverified_numbers": guard.numbers_supported(shown, evidence),     # shown to the user as a caution
         "source": cfg.provider,
         "summary": data.summary,
         "strengths": data.strengths[:8],

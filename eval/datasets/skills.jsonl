@@ -39,7 +39,7 @@
 {"kind": "posting", "text": "Spring/Summer 2026 internship programme for students", "skills": [], "negated": [], "trap": true}
 {"kind": "posting", "text": "Experience with Spring Framework (Java) and Kafka", "skills": ["Spring", "Java", "Kafka"], "negated": []}
 {"kind": "resume", "domain": "healthcare", "text": "Registered nurse on a 30-bed ICU; medication administration, patient assessment and care planning", "skills": ["Nursing", "Critical Care", "Medication Administration", "Patient Assessment", "Care Planning"]}
-{"kind": "posting", "domain": "healthcare", "text": "BLS and ACLS required. Phlebotomy experience preferred. Epic EHR documentation.", "skills": ["BLS/ACLS", "Phlebotomy", "EHR"], "negated": []}
+{"kind": "posting", "domain": "healthcare", "text": "BLS and ACLS required. Phlebotomy experience preferred. Epic EHR documentation.", "skills": ["BLS", "ACLS", "Phlebotomy", "EHR"], "negated": []}
 {"kind": "resume", "domain": "healthcare", "text": "Triage nurse in A&E; infection control lead; fluent in medical terminology", "skills": ["Triage", "Infection Control", "Medical Terminology", "Nursing"]}
 {"kind": "resume", "domain": "finance", "text": "Ran month-end close, bank reconciliations and accounts payable in Xero; prepared VAT returns", "skills": ["Reconciliation", "Accounts Payable", "Bookkeeping", "Tax"]}
 {"kind": "posting", "domain": "finance", "text": "FP&A analyst: variance analysis, budgeting and financial modelling in Excel", "skills": ["FP&A", "Budgeting", "Financial Modeling", "Excel"], "negated": []}

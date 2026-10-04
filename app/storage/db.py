@@ -89,6 +89,20 @@ companies = Table("companies", meta, Column("name_norm", String(200), primary_ke
 ext_tokens = Table("ext_tokens", meta, Column("token_hash", String(64), primary_key=True), Column("owner", String(64), index=True),
                    Column("created_at", Float), Column("last_used", Float))
 
+# ---------- AI feedback & eval tracking (LLM evaluation) ----------
+feedback = Table("feedback", meta, Column("id", Integer, primary_key=True, autoincrement=True),
+                 Column("owner", String(64), index=True), Column("kind", String(40), index=True),
+                 Column("analysis_id", String(32), index=True), Column("job_id", String(200)), Column("item_id", String(200)),
+                 Column("rating", Integer), Column("correction", Text), Column("comment", Text), Column("output", Text),
+                 Column("model", String(120)), Column("promoted", Integer, default=0), Column("created_at", Float, index=True))
+eval_runs = Table("eval_runs", meta, Column("id", String(32), primary_key=True), Column("suite", String(60), index=True),
+                  Column("model", String(120)), Column("mode", String(10)), Column("prompt_versions", Text),
+                  Column("metrics", Text), Column("cost_usd", Float), Column("latency_p50_ms", Integer),
+                  Column("latency_p95_ms", Integer), Column("cases", Integer), Column("failed", Integer),
+                  Column("git_sha", String(40)), Column("created_at", Float, index=True))
+eval_cases = Table("eval_cases", meta, Column("run_id", String(32), primary_key=True), Column("case_id", String(200), primary_key=True),
+                   Column("passed", Integer), Column("detail", Text))
+
 Index("ix_jobs_company_title", jobs.c.company, jobs.c.title)
 
 _engine: Optional[Engine] = None
@@ -236,6 +250,106 @@ def load_analysis(aid: str) -> Optional[dict]:
             "deep": loads(r["deep"], {}), "corrections": loads(res["corrections"], {}), "profile": loads(res["profile"])}
 
 
+def list_analyses(owner: str, limit: int = 50) -> list[dict]:
+    """The owner's recent, unexpired analyses with headline numbers (report history)."""
+    now = time.time()
+    with engine().connect() as c:
+        rows = c.execute(select(analyses.c.id, analyses.c.query, analyses.c.result, analyses.c.deep, analyses.c.created_at)
+                         .where(analyses.c.owner == owner, (analyses.c.expires_at.is_(None)) | (analyses.c.expires_at > now))
+                         .order_by(analyses.c.created_at.desc()).limit(limit)).all()
+    out = []
+    for r in rows:
+        q, res = loads(r.query, {}), loads(r.result, {})
+        s, jobs_ = res.get("summary") or {}, res.get("jobs") or []
+        out.append({"analysis_id": r.id, "title": q.get("title", ""), "location": q.get("location", ""),
+                    "sources": q.get("sources", []), "created_at": r.created_at,
+                    "job_count": s.get("job_count", len(jobs_)), "qualifying": s.get("qualifying", 0),
+                    "threshold": s.get("threshold", 60), "avg_score": s.get("avg_score", 0),
+                    "best_score": max((j.get("score", 0) for j in jobs_), default=0),
+                    "best_title": max(jobs_, key=lambda j: j.get("score", 0), default={}).get("title", ""),
+                    "verified": len(loads(r.deep, {}) or {})})
+    return out
+
+
+def delete_analysis(aid: str, owner: str) -> bool:
+    with engine().begin() as c:
+        return c.execute(delete(analyses).where(analyses.c.id == aid, analyses.c.owner == owner)).rowcount > 0
+
+
+def save_feedback(**row) -> int:
+    for k in ("correction", "output"):
+        if k in row and not isinstance(row[k], (str, type(None))):
+            row[k] = dumps(row[k])
+    with engine().begin() as c:
+        return c.execute(insert(feedback).values(created_at=time.time(), **row)).inserted_primary_key[0]
+
+
+def list_feedback(owner: str = "", kind: str = "", limit: int = 200, all_owners: bool = False) -> list[dict]:
+    q = select(feedback).order_by(feedback.c.created_at.desc()).limit(limit)
+    if not all_owners:
+        q = q.where(feedback.c.owner == owner)
+    if kind:
+        q = q.where(feedback.c.kind == kind)
+    with engine().connect() as c:
+        rows = [dict(r) for r in c.execute(q).mappings()]
+    for r in rows:
+        r["correction"], r["output"] = loads(r["correction"]), loads(r["output"])
+    return rows
+
+
+def feedback_summary(owner: str = "", all_owners: bool = False) -> list[dict]:
+    """Per output kind: total ratings, thumbs up/down and corrections (online eval signal)."""
+    from sqlalchemy import case, func
+    q = select(feedback.c.kind, func.count(), func.sum(case((feedback.c.rating > 0, 1), else_=0)),
+               func.sum(case((feedback.c.rating < 0, 1), else_=0)), func.sum(case((feedback.c.correction.is_not(None), 1), else_=0))
+               ).group_by(feedback.c.kind)
+    if not all_owners:
+        q = q.where(feedback.c.owner == owner)
+    with engine().connect() as c:
+        rows = c.execute(q).all()
+    return [{"kind": k, "total": n, "up": up or 0, "down": down or 0, "corrections": corr or 0,
+             "approval": round((up or 0) / ((up or 0) + (down or 0)), 3) if (up or down) else None} for k, n, up, down, corr in rows]
+
+
+def mark_feedback_promoted(fid: int) -> None:
+    with engine().begin() as c:
+        c.execute(update(feedback).where(feedback.c.id == fid).values(promoted=1))
+
+
+def save_eval_run(run: dict, cases: list[dict]) -> None:
+    with engine().begin() as c:
+        c.execute(insert(eval_runs).values(**{**run, "metrics": dumps(run.get("metrics", {})),
+                                              "prompt_versions": dumps(run.get("prompt_versions", {}))}))
+        for k in cases:
+            c.execute(insert(eval_cases).values(run_id=run["id"], case_id=str(k["case_id"])[:200], passed=int(bool(k["passed"])),
+                                                detail=dumps(k.get("detail", {}))))
+
+
+def list_eval_runs(suite: str = "", limit: int = 200) -> list[dict]:
+    q = select(eval_runs).order_by(eval_runs.c.created_at.desc()).limit(limit)
+    if suite:
+        q = q.where(eval_runs.c.suite == suite)
+    with engine().connect() as c:
+        rows = [dict(r) for r in c.execute(q).mappings()]
+    for r in rows:
+        r["metrics"], r["prompt_versions"] = loads(r["metrics"], {}), loads(r["prompt_versions"], {})
+    return rows
+
+
+def load_eval_run(run_id: str) -> Optional[dict]:
+    with engine().connect() as c:
+        r = c.execute(select(eval_runs).where(eval_runs.c.id == run_id)).mappings().first()
+        if not r:
+            return None
+        cases = [dict(x) for x in c.execute(select(eval_cases).where(eval_cases.c.run_id == run_id)).mappings()]
+    run = dict(r)
+    run["metrics"], run["prompt_versions"] = loads(run["metrics"], {}), loads(run["prompt_versions"], {})
+    for k in cases:
+        k["detail"] = loads(k["detail"], {})
+    run["cases_detail"] = cases
+    return run
+
+
 def save_resume(rid: str, text: str, sha: str, owner: str = "", profile: Any = None) -> None:
     now = time.time()
     with engine().begin() as c:
@@ -303,6 +417,9 @@ def export_owner(owner: str) -> dict:
                                           .where(searches.c.owner == owner)).mappings()]
         apps = [dict(x) for x in c.execute(select(applications).where(applications.c.owner == owner)).mappings()]
         ws = [dict(x) for x in c.execute(select(watches).where(watches.c.owner == owner)).mappings()]
+        fb = [dict(x) for x in c.execute(select(feedback).where(feedback.c.owner == owner)).mappings()]
+    for x in fb:
+        x["correction"], x["output"] = loads(x["correction"]), loads(x["output"])
     for r in res:
         r["profile"], r["corrections"] = loads(r["profile"]), loads(r["corrections"], {})
     for x in an + se:
@@ -311,7 +428,7 @@ def export_owner(owner: str) -> dict:
         x["data"] = loads(x["data"], {})
     for x in ws:
         x["query"] = loads(x["query"], {})
-    return {"resumes": res, "analyses": an, "searches": se, "applications": apps, "watches": ws}
+    return {"resumes": res, "analyses": an, "searches": se, "applications": apps, "watches": ws, "feedback": fb}
 
 
 def delete_owner(owner: str) -> dict:
@@ -327,6 +444,7 @@ def delete_owner(owner: str) -> dict:
         w = c.execute(delete(watches).where(watches.c.owner == owner)).rowcount
         c.execute(delete(ext_tokens).where(ext_tokens.c.owner == owner))
         c.execute(delete(llm_calls).where(llm_calls.c.owner == owner))
+        c.execute(delete(feedback).where(feedback.c.owner == owner))
         if owner.startswith("u:"):
             uid = owner[2:]
             c.execute(delete(sessions).where(sessions.c.user_id == uid))
@@ -341,7 +459,7 @@ def reassign_owner(old: str, new: str) -> None:
     with engine().begin() as c:
         for t in (resumes, analyses):
             c.execute(update(t).where(t.c.owner == old).values(owner=new, expires_at=expiry(new)))
-        for t in (searches, applications, watches, ext_tokens, llm_calls):
+        for t in (searches, applications, watches, ext_tokens, llm_calls, feedback):
             c.execute(update(t).where(t.c.owner == old).values(owner=new))
 
 

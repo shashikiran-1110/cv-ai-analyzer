@@ -22,8 +22,10 @@ import logging
 import os
 import random
 import time
+from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Literal, Optional, TypeVar
+from pathlib import Path
+from typing import Any, AsyncIterator, Callable, Literal, Optional, TypeVar
 
 import httpx
 from pydantic import BaseModel, ValidationError
@@ -204,8 +206,10 @@ def _text(provider: str, data: dict) -> str:
 def _log(call: Call, cfg: llm.LLMConfig, model: str, usage: dict, t0: float, status: str, cache_hit: bool = False) -> Optional[float]:
     c = cost_usd(model, usage.get("input", 0), usage.get("output", 0), usage.get("cache_read", 0), usage.get("cache_write", 0)) \
         if not cache_hit else 0.0
+    tags = EVAL_TAGS.get()
+    owner, run_id = (tags["owner"], tags["run_id"]) if tags else (call.owner, call.run_id)   # eval runs are tagged
     try:
-        db.log_llm_call(owner=call.owner, analysis_id=call.analysis_id, run_id=call.run_id, agent=call.agent,
+        db.log_llm_call(owner=owner, analysis_id=call.analysis_id, run_id=run_id, agent=call.agent,
                         provider=cfg.provider, model=model, key_source=cfg.source, input_tokens=usage.get("input", 0),
                         output_tokens=usage.get("output", 0), cached_tokens=usage.get("cache_read", 0),
                         cache_write_tokens=usage.get("cache_write", 0), cost_usd=c,
@@ -225,7 +229,71 @@ def check_budget(cfg: llm.LLMConfig, call: Call) -> None:
         raise llm.LLMError(f"Daily AI budget reached (${cap:.2f}). Add your own API key in AI settings to continue.", 429)
 
 
+# ---------- evaluation hooks (eval/llm): record / replay / mock at the single HTTP choke point ----------
+# EVAL_LLM_MODE: "" (normal) | "live" | "record" (call + save) | "replay" (saved responses only) | "mock" (scripted model)
+EVAL_TAGS: ContextVar[Optional[dict]] = ContextVar("eval_tags", default=None)   # {"owner","run_id","salt","mode","cassette_dir"}
+MOCK_RESPONDER: Optional[Callable[[llm.LLMConfig, str, dict], dict]] = None     # set by eval.llm.mockmodel
+
+
+class CassetteMiss(llm.LLMError):
+    """Replay mode has no recorded response for this exact request (prompt, model or schema changed)."""
+
+
+def _eval_mode() -> str:
+    """Per-task mode from EVAL_TAGS (in-server eval runs never affect other requests); env var as CLI fallback."""
+    tags = EVAL_TAGS.get()
+    if tags and "mode" in tags:
+        return str(tags["mode"]).lower()
+    return os.getenv("EVAL_LLM_MODE", "").lower()
+
+
+def cassette_key(cfg: llm.LLMConfig, url: str, payload: dict) -> str:
+    tags = EVAL_TAGS.get() or {}
+    blob = json.dumps([cfg.provider, url.rsplit("/", 1)[-1], payload, tags.get("salt", "")], sort_keys=True)
+    return hashlib.sha256(blob.encode()).hexdigest()[:40]
+
+
+def _cassette_path(key: str) -> Path:
+    tags = EVAL_TAGS.get() or {}
+    return Path(tags.get("cassette_dir") or os.getenv("EVAL_CASSETTE_DIR", "eval/cassettes/default")) / f"{key}.json"
+
+
+async def _eval_post(cfg: llm.LLMConfig, url: str, payload: dict) -> Optional[dict]:
+    """Returns a response when an eval mode intercepts the call, else None (normal HTTP)."""
+    mode = _eval_mode()
+    if mode == "mock":
+        if MOCK_RESPONDER is None:
+            raise llm.LLMError("EVAL_LLM_MODE=mock but no mock model is installed.", 500)
+        return MOCK_RESPONDER(cfg, url, payload)
+    if mode not in ("record", "replay"):
+        return None
+    path = _cassette_path(cassette_key(cfg, url, payload))
+    if mode == "replay":
+        if not path.exists():
+            raise CassetteMiss(f"No recorded LLM response for this request ({path.name}). Re-record with EVAL_LLM_MODE=record.", 500)
+        return json.loads(path.read_text())["response"]
+    return None
+
+
+def _eval_save(cfg: llm.LLMConfig, url: str, payload: dict, data: dict) -> None:
+    if _eval_mode() != "record":
+        return
+    path = _cassette_path(cassette_key(cfg, url, payload))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"provider": cfg.provider, "model": payload.get("model"), "endpoint": url.rsplit("/", 1)[-1],
+                                "response": data}, ensure_ascii=False, indent=1))
+
+
 async def _post(cfg: llm.LLMConfig, url: str, payload: dict) -> dict:
+    intercepted = await _eval_post(cfg, url, payload)
+    if intercepted is not None:
+        return intercepted
+    data = await _post_http(cfg, url, payload)
+    _eval_save(cfg, url, payload, data)
+    return data
+
+
+async def _post_http(cfg: llm.LLMConfig, url: str, payload: dict) -> dict:
     _breaker_check(cfg.provider)
     delay = 1.0
     last: Optional[llm.LLMError] = None
@@ -269,7 +337,9 @@ async def complete(cfg: llm.LLMConfig, call: Call, system: str, messages: list[d
 
 async def _complete(cfg, call: Call, system, messages, *, cacheable, schema, schema_name, json_mode) -> tuple[str, dict]:
     model = model_for(cfg, call.tier)
-    key = _cache_key(call, model, system, cacheable, messages, schema) if call.use_cache else ""
+    # evals must see real model behaviour (and run-to-run variance), never a cached answer
+    use_cache = call.use_cache and os.getenv("LLM_RESULT_CACHE", "1") != "0" and not EVAL_TAGS.get()
+    key = _cache_key(call, model, system, cacheable, messages, schema) if use_cache else ""
     if key:
         hit = db.kv_get(key)
         if hit is not None:
@@ -370,7 +440,7 @@ async def structured(cfg: llm.LLMConfig, call: Call, system: str, user: str, sch
         out = schema_model.model_validate(_parse_json(text2))
     except (ValueError, ValidationError):
         raise llm.LLMError("The AI returned an answer in the wrong format twice. Try again.", 502)
-    if call.use_cache:     # cache the repaired, valid answer under the original key
+    if call.use_cache and os.getenv("LLM_RESULT_CACHE", "1") != "0" and not EVAL_TAGS.get():   # cache the repaired answer
         db.kv_set(_cache_key(call, model_for(cfg, call.tier), system, cacheable, messages, schema), text2, call.cache_ttl)
     return out
 

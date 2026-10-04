@@ -2,6 +2,12 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
+    inputs:
+      llm_model:
+        description: "Run real-model LLM evals with this model (needs the OPENAI_API_KEY secret); empty = skip"
+        required: false
+        default: ""
 
 jobs:
   backend:
@@ -13,11 +19,26 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Unit, regression and API tests
         run: python -m pytest -q
-      - name: Eval gate (deterministic suites, ROADMAP §7.4)
-        run: python -m eval.run --check --out eval/reports/ci.md
+      - name: Eval gate (deterministic suites + LLM suites against the adversarial mock; defenses must stay at 0)
+        run: python -m eval.run --check --mode mock --no-persist --out eval/reports/ci.md
       - if: always()
         uses: actions/upload-artifact@v4
         with: { name: eval-report, path: eval/reports/ci.md }
+
+  llm-eval-live:
+    if: github.event_name == 'workflow_dispatch' && inputs.llm_model != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - run: pip install -r requirements.txt
+      - name: Real-model LLM evals (records cassettes; compare per model against eval/baseline.real.json)
+        run: python -m eval.run --suite llm --mode record --model "${{ inputs.llm_model }}" --check --no-persist --out eval/reports/llm-live.md
+        env: { OPENAI_API_KEY: "${{ secrets.OPENAI_API_KEY }}", AI_PROVIDER: openai }
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: llm-eval-report, path: "eval/reports/llm-live.md\neval/cassettes/" }
 
   backend-postgres:
     runs-on: ubuntu-latest

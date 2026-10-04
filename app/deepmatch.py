@@ -120,20 +120,53 @@ def evidence_in_resume(quote: str, resume_norm: str) -> bool:
     return any(" ".join(toks[i:i + 5]) in resume_norm for i in range(len(toks) - 4))
 
 
+_LOW_INFO = {"experience", "year", "years", "work", "strong", "skill", "skills", "ability", "abilities", "knowledge", "team", "role",
+             "using", "build", "building", "develop", "development", "conduct", "conducting", "perform", "provide",
+             "demonstrated", "proven", "track", "record", "subject", "related", "field", "similar", "equivalent", "hands",
+             "solid", "excellent", "deep", "good", "familiar", "familiarity", "proficiency", "proficient", "understanding",
+             "minimum", "least", "plus", "preferred", "required", "current", "active", "level", "other", "including"}
+_STEM_RE = re.compile(r"[a-z][a-z0-9+#\-]{1,}")
+_SUFFIXES = ("ations", "ation", "ments", "ment", "ings", "ing", "ers", "er", "ies", "es", "ed", "s")
+
+
+def _stems(text: str) -> set[str]:
+    """Light stems (common suffix stripped, 5-letter prefix) of the informative words: negotiation ≈ negotiate,
+    tests ≈ testing, teacher ≈ teaching."""
+    out = set()
+    for w in _STEM_RE.findall(text.lower()):
+        w = w.strip("-")
+        if len(w) < 3 or w in _LOW_INFO or w in matcher._STOP:
+            continue
+        for suf in _SUFFIXES:
+            if w.endswith(suf) and len(w) - len(suf) >= 3:
+                w = w[: -len(suf)]
+                break
+        out.add(w[:5])
+    return out
+
+
 def evidence_relevant(quote: str, requirement: str) -> bool:
-    """The quote must be *about* the requirement: a shared skill, or a shared meaningful term."""
+    """The quote must be *about* the requirement (calibrated on eval/datasets/llm/deep_verify.jsonl + llm_safety):
+    - it names one of the requirement's skills ("Kafka or Pulsar": either), or
+    - it shares most of the requirement's informative words (light stems; a degree word counts for a degree
+      requirement). When the requirement names a skill the quote lacks, at least two shared words are needed, so
+      "patient care" can't prove "critical care" and a BLS card can't prove ACLS.
+    - a pure "N years of experience" requirement needs a duration or date range in the quote."""
     req_skills = sk.extract_skills(requirement)
     if req_skills and req_skills & sk.extract_skills(quote):
         return True
-    req_terms = set(matcher._content_terms(requirement)) - _GENERIC
-    if req_terms & set(matcher._content_terms(quote)):
-        return True
-    if not req_skills and not req_terms:
-        # pure "N+ years of experience" style requirement: the quote must state a duration or a date range
+    req = _stems(requirement)
+    if matcher._DEGREE_CUE.search(requirement):
+        req -= _stems("degree bachelor bachelors master masters")
+        req.add("<degree>")
+    q = _stems(quote) | ({"<degree>"} if matcher._DEGREE_CUE.search(quote) or matcher.education_level(quote) else set())
+    if not req:
         if _YEARS.search(requirement):
             return bool(_YEARS.search(quote) or _DATE_RANGE.search(quote))
-        return True        # nothing specific to compare against
-    return False
+        return not req_skills          # nothing specific to compare against (but a named skill must be shown)
+    shared = req & q
+    need = max(2 if req_skills else 1, (len(req) + 1) // 2)
+    return len(shared) >= min(need, len(req)) if not req_skills else len(shared) >= need
 
 
 def _extract_json(text: str) -> dict:
@@ -146,6 +179,7 @@ def _extract_json(text: str) -> dict:
 def _judge(status: str, evidence: str, requirement: str, resume_norm: str) -> dict:
     """Apply the evidence rules to one AI verdict."""
     status = status if status in COV else "missing"
+    raw = status                                                       # the model's claim, kept for evaluation
     found = bool(evidence) and evidence_in_resume(evidence, resume_norm)
     relevant = found and evidence_relevant(evidence, requirement)
     verified = status in ("met", "partial") and relevant
@@ -154,7 +188,7 @@ def _judge(status: str, evidence: str, requirement: str, resume_norm: str) -> di
         flag = ("AI quote not found in your resume" if evidence and not found else
                 "AI quote doesn't relate to this requirement" if evidence else "no resume evidence given")
         status = "partial" if status == "met" else "missing"          # D10
-    return {"ai_status": status, "verified": verified, "flag": flag,
+    return {"ai_status": status, "raw_status": raw, "evidence_found": found, "verified": verified, "flag": flag,
             "evidence": evidence if verified else "", "claimed_evidence": "" if verified else evidence}
 
 
@@ -218,13 +252,14 @@ def combine(scored: dict, stored: dict) -> dict:
         by_text = {j["text"]: j for j in stored["judgments"].values()}   # match by text: ids are positional
         for r in det_reqs:
             j = by_text.get(r["text"])
-            use_ai = bool(j and j["verified"])
+            use_ai = bool(j and j["verified"]) and not r.get("user_override")   # a user correction wins
             cov = COV[j["ai_status"]] if use_ai else r["coverage"]
             rows.append({"id": r["id"], "requirement": r["text"], "importance": "nice" if r["preferred"] else "must",
                          "preferred": r["preferred"], "coverage": cov,
                          "det_status": r["status"], "ai_status": j["ai_status"] if j else "not assessed",
                          "final_status": "met" if cov >= 0.75 else "partial" if cov >= 0.35 else "missing",
-                         "source": "ai" if use_ai else "rules", "verified": bool(j and j["verified"]),
+                         "source": "ai" if use_ai else "you" if r.get("user_override") else "rules",
+                         "verified": bool(j and j["verified"]),
                          "evidence": j["evidence"] if j else "", "claimed_evidence": j["claimed_evidence"] if j else "",
                          "flag": j["flag"] if j else "", "note": j["note"] if j else "",
                          "disagree": bool(j) and j["ai_status"] != r["status"]})

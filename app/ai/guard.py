@@ -29,6 +29,13 @@ _COMMON_CAPS = {"I", "The", "A", "An", "Led", "Built", "Designed", "Developed", 
                 "Prepared", "Ran", "Wrote", "Introduced", "Coordinated", "Trained", "Maintained", "Defined", "Used"}
 
 
+def echoes_instructions(output: str, instructions: str, run: int = 7) -> bool:
+    """True if `output` repeats any `run`-word stretch of `instructions` (prompt leak via injected text)."""
+    words = re.findall(r"[a-z']+", instructions.lower())
+    out = " ".join(re.findall(r"[a-z']+", output.lower()))
+    return any(" ".join(words[i:i + run]) in out for i in range(max(0, len(words) - run + 1)))
+
+
 def sanitize_untrusted(text: str) -> str:
     return _INJECTION.sub("[removed instruction-like text]", text)
 

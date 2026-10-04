@@ -35,7 +35,7 @@ from .understanding import requirements as req_extract, resume_parse
 from .agents import coach, interview, planner, tailoring
 from .ai import guard
 from . import docx_export
-from .api import accounts, companies, ext, market, ops, tracker, watches
+from .api import accounts, companies, evals, ext, market, ops, tracker, watches
 from .runtime import logs as runtime_logs, metrics, scheduler
 
 runtime_logs.setup()
@@ -514,7 +514,10 @@ def _profile(a: dict, extra: list[str], text: Optional[str] = None) -> matcher.R
 def _compute(a: dict, extra: list[str], threshold: int) -> dict:
     profile = _profile(a, extra)
     results = [matcher.score_job(j, profile, a["idf"], _loc_ok(a, j)) for j in a["jobs_full"]]
+    overrides = (a.get("result") or {}).get("overrides") or {}
     for r in results:  # merge verified AI judgments (Deep Verifier v2); the engine recomputes the score
+        if overrides.get(r["id"]):
+            _apply_overrides(r, overrides[r["id"]])
         r["score_det"] = r["score"]
         stored = a.get("deep", {}).get(r["id"])
         if stored:
@@ -522,6 +525,25 @@ def _compute(a: dict, extra: list[str], threshold: int) -> dict:
             r["score"] = r["deep"]["final_score"]
     results.sort(key=lambda r: -r["score"])
     return {"summary": matcher.aggregate(results, profile, threshold), "jobs": results}
+
+
+def _apply_overrides(r: dict, ov: dict[str, str]) -> None:
+    """User corrections of a requirement's status (feedback) beat both the rules and the AI for that row."""
+    hit = False
+    for q in r.get("requirements") or []:
+        st = ov.get(q["text"])
+        if st in deepmatch.COV:
+            q.update(status=st, coverage=deepmatch.COV[st], how="your correction", user_override=True)
+            hit = True
+    if not hit:
+        return
+    r["requirements_met"] = sum(1 for q in r["requirements"] if q["status"] == "met")
+    comp = {k: v / 100 for k, v in r["components"].items()}
+    cov = matcher.requirement_coverage(r["requirements"])
+    if cov is not None:
+        comp["requirements"] = cov
+        r["components"]["requirements"] = round(cov * 100)
+    r["score"] = matcher.total_from(comp, r.get("penalty", 0.0), r.get("capped", False))
 
 
 def _parse_extra(raw: list[str]) -> tuple[list[str], list[str]]:
@@ -649,6 +671,65 @@ async def get_analysis(aid: str):
     a = _analysis(aid)
     return {"analysis_id": aid, "resume_id": a.get("resume_id"), "search_id": a.get("search_id"),
             "extra_skills": a.get("extra", []), "unknown_skills": [], **a["result"]}
+
+
+@app.get("/api/analyses")
+async def list_analyses(request: Request, limit: int = 50):
+    """Report history for this browser/account."""
+    return await run_in_threadpool(db.list_analyses, owner(request), max(1, min(limit, 200)))
+
+
+@app.delete("/api/analysis/{aid}")
+async def delete_analysis(aid: str, request: Request):
+    me = owner(request)
+    mem = ANALYSES.get(aid)
+    if mem and mem.get("owner", "") != me:
+        raise HTTPException(404, "Report not found.")
+    ok = await run_in_threadpool(db.delete_analysis, aid, me)
+    if not ok and not mem:
+        raise HTTPException(404, "Report not found.")
+    ANALYSES.pop(aid, None)
+    return {"deleted": True}
+
+
+FEEDBACK_KINDS = Literal["requirement", "deep_requirement", "insights", "coach", "assistant", "tool", "tailoring_edit",
+                         "interview_feedback", "planner", "extractor", "job_score"]
+
+
+class FeedbackIn(BaseModel):
+    kind: FEEDBACK_KINDS
+    analysis_id: str = Field(default="", max_length=32)
+    job_id: str = Field(default="", max_length=200)
+    item_id: str = Field(default="", max_length=400)          # requirement text, message index, edit id…
+    rating: Literal[-1, 0, 1] = 0
+    correction: Optional[dict] = None                          # e.g. {"status": "met"} for a requirement row
+    comment: str = Field(default="", max_length=2000)
+    output: Optional[str] = Field(default=None, max_length=20000)   # the AI output being rated (for eval datasets)
+    model: str = Field(default="", max_length=120)
+
+
+@app.post("/api/feedback")
+async def post_feedback(body: FeedbackIn, request: Request):
+    """Thumbs up/down and corrections on any AI output. Requirement-status corrections re-score the job at once
+    (the user's verdict beats rules and AI for that row) and become candidates for the eval datasets."""
+    if body.rating == 0 and not body.correction and not body.comment.strip():
+        raise HTTPException(422, "Give a rating, a correction or a comment.")
+    status = (body.correction or {}).get("status")
+    if status is not None and status not in deepmatch.COV:
+        raise HTTPException(422, "Correction status must be met, partial or missing.")
+    fid = await run_in_threadpool(lambda: db.save_feedback(
+        owner=owner(request), kind=body.kind, analysis_id=body.analysis_id, job_id=body.job_id, item_id=body.item_id,
+        rating=body.rating, correction=body.correction, comment=body.comment.strip(), output=body.output, model=body.model))
+    out: dict = {"id": fid}
+    if status and body.kind in ("requirement", "deep_requirement") and body.analysis_id and body.job_id and body.item_id:
+        a = _analysis(body.analysis_id)
+        _job(a, body.job_id)
+        a["result"].setdefault("overrides", {}).setdefault(body.job_id, {})[body.item_id] = status
+        computed = await run_in_threadpool(_compute, a, a.get("extra", []), a["result"]["summary"]["threshold"])
+        a["result"].update(computed)
+        await run_in_threadpool(_persist_analysis, body.analysis_id, a)
+        out.update(summary=computed["summary"], jobs=computed["jobs"])
+    return out
 
 
 @app.get("/api/runs/{run_id}/events")
@@ -1181,7 +1262,7 @@ async def interview_answer(aid: str, job_id: str, body: PracticeAnswer, request:
 
 
 # ---------- Phase 6 routers ----------
-for _r in (accounts.router, tracker.router, watches.router, companies.router, market.router, ext.router, ops.router):
+for _r in (accounts.router, tracker.router, watches.router, companies.router, market.router, ext.router, ops.router, evals.router):
     app.include_router(_r)
 
 
