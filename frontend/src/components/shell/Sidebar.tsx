@@ -1,4 +1,4 @@
-import { Bell, Briefcase, ChartLine, Clock, FlaskConical, Keyboard, PanelLeft, Plus, ScanSearch, Settings, Wifi } from "lucide-react";
+import { Bell, Briefcase, ChartLine, Clock, Eraser, FlaskConical, Keyboard, PanelLeft, Plus, ScanSearch, Settings, Wifi } from "lucide-react";
 import { useEffect } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import { useShell } from "./ShellProvider";
@@ -39,6 +39,7 @@ export function Sidebar() {
       <div className="side-foot">
         <button className="nav-item" onClick={() => shell.setDiag(true)} title={tip("Connection check")}><Wifi aria-hidden="true" /><span>Connection check</span></button>
         <button className="nav-item" onClick={() => shell.setShortcuts(true)} title={tip("Keyboard shortcuts")}><Keyboard aria-hidden="true" /><span>Shortcuts</span></button>
+        <button className="nav-item" onClick={() => shell.setClearOpen(true)} title={tip("Clear session")} data-testid="clear-session"><Eraser aria-hidden="true" /><span>Clear session</span></button>
         <button className="nav-item collapse-btn" onClick={() => shell.setCollapsed(!shell.collapsed)} aria-pressed={shell.collapsed}
           title={shell.collapsed ? "Expand sidebar" : undefined}><PanelLeft aria-hidden="true" /><span>Collapse</span></button>
       </div>

@@ -5,7 +5,9 @@ import { AiProvider, useAi } from "./ai";
 import { api, SERVER_DOWN } from "./api";
 import { AiSettingsModal } from "./components/AiSettingsModal";
 import { DiagnoseModal } from "./components/DiagnoseModal";
+import { ClearSession } from "./components/shell/ClearSession";
 import { CommandPalette } from "./components/shell/CommandPalette";
+import { ErrorBoundary } from "./components/shell/ErrorBoundary";
 import { ShellProvider, useShell } from "./components/shell/ShellProvider";
 import { ShortcutsHelp } from "./components/shell/ShortcutsHelp";
 import { Sidebar } from "./components/shell/Sidebar";
@@ -54,6 +56,7 @@ function Shell() {
         {serverDown && <div className="banner" role="alert">{SERVER_DOWN} <button className="link" onClick={openDiag}>Details</button></div>}
         <main className="wrap" id="main">
           <div key={loc.pathname} className="route">
+            <ErrorBoundary onClearSession={() => shell.setClearOpen(true)}>
             <Suspense fallback={<Skeleton rows={6} />}>
               <Routes location={loc}>
                 <Route path="/" element={<SetupStep openDiagnose={openDiag} />} />
@@ -73,6 +76,7 @@ function Shell() {
                 <Route path="*" element={<section className="empty-state"><h1>Page not found</h1><p className="muted">That link doesn't match any page.</p><Link className="btn" to="/">New search</Link></section>} />
               </Routes>
             </Suspense>
+            </ErrorBoundary>
           </div>
         </main>
         <footer className="foot">Scores are an automated, explainable estimate (skills, requirements, role, experience, semantic overlap), not a hiring decision. Use them to prioritise and to spot gaps.</footer>
@@ -80,6 +84,7 @@ function Shell() {
       {ai.modalOpen && <AiSettingsModal />}
       {shell.diag && <DiagnoseModal onClose={() => shell.setDiag(false)} />}
       <CommandPalette />
+      <ClearSession />
       <ShortcutsHelp />
     </div>
   );

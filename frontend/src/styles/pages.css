@@ -340,3 +340,80 @@ mark.pl.flash { box-shadow: 0 0 0 2px var(--brand); }
 .label-btns { display: flex; gap: 8px; flex-wrap: wrap; }
 .label-btns .btn kbd { margin-left: 4px; }
 .lb-table td.model { font-weight: 500; }
+
+/* ---------- saved job links ---------- */
+.src-grid .span-all, .two .span-all { grid-column: 1 / -1; }
+.saved-links { display: grid; gap: 8px; }
+.saved-links textarea { min-height: 54px; }
+.link-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 8px; max-height: 260px; overflow: auto; background: var(--card); }
+.link-list li { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 7px 10px; border-top: 1px solid var(--line); }
+.link-list li:first-child { border-top: 0; }
+.link-list .link-main { min-width: 0; display: grid; }
+.link-list a { color: var(--ink); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-flex; gap: 4px; align-items: center; }
+.link-list a svg { color: var(--muted); flex: none; }
+.link-list small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- search progress phases ---------- */
+.phases { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; font-size: 12px; }
+.phase { padding: 3px 10px; border-radius: 99px; background: var(--surface-2); color: var(--muted); border: 1px solid var(--line); }
+.phase.on { background: var(--brand-soft); color: var(--brand); border-color: var(--brand-line); font-weight: 500; }
+.phase.done { color: var(--good); border-color: var(--good-line); background: var(--good-soft); }
+.phases .elapsed { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* ---------- jobs analytics ---------- */
+.analytics { margin-bottom: 16px; }
+.an-toggle { margin: 0 0 12px; font-size: 13px; }
+.an-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 16px; align-items: start; margin-bottom: 16px; }
+.an-grid > .card, .an-side > .card { margin-bottom: 0; }
+.an-side { display: grid; gap: 16px; }
+@media (max-width: 960px) { .an-grid { grid-template-columns: 1fr; } }
+.an-charts > .card { margin-bottom: 0; }
+.an-charts { margin-bottom: 16px; }
+.q-list { list-style: none; margin: 0; padding: 0; }
+.q-list li { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px 0; border-top: 1px solid var(--line); }
+.q-list li:first-child { border-top: 0; }
+.q-main { min-width: 0; display: grid; gap: 2px; }
+.q-title { font-weight: 500; color: var(--ink); display: inline-flex; gap: 5px; align-items: center; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+a.q-title:hover { color: var(--brand); }
+.q-title svg { width: 12px; height: 12px; color: var(--muted); flex: none; }
+.q-actions { display: flex; gap: 4px; }
+.q-list .t-sub { white-space: normal; max-width: none; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
+.funnel ol { margin: 0 0 8px; padding-left: 20px; display: grid; gap: 4px; font-size: 13px; }
+.funnel ol b { font-variant-numeric: tabular-nums; }
+.filter-note { font-size: 12.5px; color: var(--muted); display: flex; gap: 6px; align-items: center; margin: -4px 0 12px; }
+.hbar.clickable { all: unset; display: grid; grid-template-columns: minmax(90px, 160px) 1fr 54px; gap: 10px; align-items: center; font-size: 13px; cursor: pointer; border-radius: 4px; padding: 1px 2px; }
+.hbar.clickable:hover span:first-child { color: var(--brand); text-decoration: underline; }
+.hbar.clickable:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.hbar { grid-template-columns: minmax(90px, 160px) 1fr 54px; }
+.meter.stacked { position: relative; }
+.meter.stacked i { position: absolute; left: 0; top: 0; bottom: 0; }
+.meter.stacked i.sub { background: var(--good); }
+.meter.stacked i:not(.sub) { background: color-mix(in srgb, var(--brand) 35%, var(--surface-3)); }
+.meter.stacked i.warn:not(.sub) { background: var(--warn); }
+
+/* ---------- AI report ---------- */
+.head-icon { width: 20px; height: 20px; color: var(--brand); flex: none; }
+.strategy .chips { margin-bottom: 4px; }
+.prio h3.sec { margin-top: 14px; }
+.prio-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.prio-dot.p1 { background: var(--good); } .prio-dot.p2 { background: var(--brand); } .prio-dot.p3 { background: var(--warn); }
+.pick-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.pick-list > li { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--surface-2); }
+.pick-list p { margin: 6px 0 4px; font-size: 13px; }
+.pick-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.pick-actions { margin-left: auto; display: flex; gap: 4px; }
+.steps-list { margin: 0; padding-left: 20px; display: grid; gap: 4px; font-size: 13px; }
+.skip { margin-top: 12px; font-size: 13px; }
+.skip summary { cursor: pointer; color: var(--ink-2); }
+.lead-p { font-size: 14px; line-height: 1.6; margin: 0 0 10px; }
+.paths { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.paths li { display: grid; gap: 2px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; font-size: 13px; }
+.paths li span { color: var(--ink-2); }
+.weeks-plan { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.weeks-plan li { display: grid; grid-template-columns: 64px 1fr; grid-template-rows: auto auto; gap: 0 10px; font-size: 13px; padding: 6px 0; border-top: 1px solid var(--line); }
+.weeks-plan li:first-child { border-top: 0; }
+.weeks-plan .wk { grid-row: span 2; font-size: 11.5px; color: var(--muted); font-weight: 500; padding-top: 2px; }
+.weeks-plan small { color: var(--muted); }
+.auto-deep .p-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 13px; }
+.auto-deep .p-top span { display: inline-flex; gap: 6px; align-items: center; }
+.auto-deep .bar { margin: 0; }

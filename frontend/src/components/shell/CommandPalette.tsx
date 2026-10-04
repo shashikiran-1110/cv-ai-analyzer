@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Command } from "cmdk";
-import { Bot, Clock, FileText, Keyboard, Monitor, Moon, Plus, Sun, Wifi } from "lucide-react";
+import { Bot, Clock, Eraser, FileText, Keyboard, Monitor, Moon, Plus, Sun, Wifi } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAi } from "../../ai";
@@ -76,6 +76,7 @@ export function CommandPalette() {
               <Command.Item value="Connection check" keywords={["diagnose", "network"]} onSelect={go(() => shell.setDiag(true))}><Wifi /><span>Connection check</span></Command.Item>
               <Command.Item value="Keyboard shortcuts" keywords={["help", "keys"]} onSelect={go(() => shell.setShortcuts(true))}><Keyboard /><span>Keyboard shortcuts</span><span className="hint">?</span></Command.Item>
               <Command.Item value="Reports history" onSelect={go(() => navigate("/reports"))}><Clock /><span>All reports</span></Command.Item>
+              <Command.Item value="Clear session" keywords={["reset", "discard", "forget", "start over"]} onSelect={go(() => shell.setClearOpen(true))}><Eraser /><span>Clear session</span></Command.Item>
             </Command.Group>
           </Command.List>
         </Command>

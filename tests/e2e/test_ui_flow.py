@@ -82,6 +82,8 @@ def test_full_flow(server, browser, resume_pdf):
     page.fill("input[aria-label='Number of posts']", "30")
     page.fill("input[aria-label='Greenhouse boards company slugs']", "stripe")
     page.fill("textarea[aria-label='Job URLs']", "https://wellfound.com/jobs/1-data-engineer\nhttps://careers.example.com/job/1")
+    expect(page.locator(".link-list li")).to_have_count(2, timeout=6000)                 # saved server-side until discarded
+    expect(page.locator("textarea[aria-label='Job URLs']")).to_have_value("")
     page.click(".ai-chip")
     page.fill("input[placeholder='sk-…']", "sk-good")
     page.click("button:has-text('Verify & save')")
@@ -94,6 +96,9 @@ def test_full_flow(server, browser, resume_pdf):
     qualify = page.locator("[data-testid=qualify]")
     expect(qualify).to_contain_text("of ")
     expect(page.locator(".summary")).to_contain_text("AI: strong", timeout=10000)        # AI advice streamed in
+    expect(page.locator("[data-testid=strategy]")).to_contain_text("Apply now", timeout=15000)
+    expect(page.locator("[data-testid=strategy]")).not_to_contain_text("demo-invented-id")   # invented id dropped by the server
+    expect(page.locator("[data-testid=career-report]")).to_contain_text("Analytics Engineer")
     first = qualify.get_attribute("data-value")
 
     # refresh restores the report (Phase 2 acceptance) and URL state drives tabs/drawer
@@ -102,6 +107,10 @@ def test_full_flow(server, browser, resume_pdf):
     expect(qualify).to_have_text(re.compile(rf"^{first.split('/')[0]} of {first.split('/')[1]} jobs"), timeout=5000)
     page.click(".tabs button:has-text('Jobs')")
     expect(page).to_have_url(re.compile(r"tab=jobs"))
+    # jobs analytics: "where you qualify" / near-miss titles open the posting on its portal in a new tab
+    link = page.locator("[data-testid=where-qualify] a.q-title").first
+    expect(link).to_have_attribute("target", "_blank")
+    assert link.get_attribute("href").startswith("http")
     page.click("button:has-text('Verify top 5')")
     expect(page.locator(".tag.ai")).to_have_count(5, timeout=20000)
     page.locator(".r-head").first.click()
@@ -273,6 +282,15 @@ def test_full_flow(server, browser, resume_pdf):
     page.locator(".joblist li input[type=checkbox]").first.uncheck()
     page.click("button:has-text('Analyze')")
     expect(page).to_have_url(re.compile(r"/analysis/"), timeout=15000)
+
+    # saved links persist across a reload; Clear session discards this tab's data
+    page.goto(server + "/")
+    expect(page.locator(".link-list li")).to_have_count(2, timeout=6000)
+    page.click("[data-testid=clear-session]")
+    page.click("[data-testid=confirm-clear]")
+    expect(page.locator(".toast", has_text="Session cleared")).to_have_count(1, timeout=5000)
+    expect(page.locator("[data-testid=resume-preview]")).to_have_count(0)
+    expect(page.locator("input[placeholder='e.g. Data Engineer']")).to_have_value("")
 
     # mobile layout
     page.set_viewport_size({"width": 390, "height": 850})

@@ -34,7 +34,8 @@ export function SearchPage({ openDiagnose }: { openDiagnose: () => void }) {
 
   useRunEvents(s?.status === "running" ? sid : null, (e) => {
     if (e.type === "source.progress")
-      qc.setQueryData<SearchStatus>(["search", sid], (old) => old && { ...old, sources: e.data.sources, linkedin: e.data.linkedin });
+      qc.setQueryData<SearchStatus>(["search", sid], (old) => old && { ...old, sources: e.data.sources, linkedin: e.data.linkedin,
+        stage: e.data.stage ?? old.stage, enrich: e.data.enrich ?? old.enrich });
     if (e.type === "run.finished") void qc.invalidateQueries({ queryKey: ["search", sid] });
   }, () => void qc.invalidateQueries({ queryKey: ["search", sid] }));
 
@@ -70,7 +71,7 @@ export function SearchPage({ openDiagnose }: { openDiagnose: () => void }) {
       <section aria-labelledby="h-run" className="enter">
         <h1 id="h-run">{s.status === "running" ? `Searching for “${s.query.title}”` : "Scoring your resume…"}</h1>
         <p className="lead">{s.status === "running" ? "Sources run in parallel; each one can fail without stopping the others." : "Comparing your resume with every requirement."}</p>
-        <SearchProgress stage={s.status === "running" ? "fetching" : stage} sources={s.sources ?? []} linkedin={s.linkedin} />
+        <SearchProgress stage={s.status === "running" ? (s.stage === "enriching" ? "enriching" : "fetching") : stage} sources={s.sources ?? []} linkedin={s.linkedin} enrich={s.enrich} />
         <Link className="link" to="/">Cancel and change setup</Link>
       </section>
     );

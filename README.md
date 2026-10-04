@@ -35,6 +35,20 @@ A sidebar app (collapsible; a drawer on phones) with light and dark themes:
   requirement matrix rows that highlight the posting line, and a *Correct…* control on every requirement.
 - **Feedback on every AI output** (👍/👎, “what was wrong”); correcting a requirement's status re-scores the job at
   once and is logged for evaluation.
+- **Jobs analytics** (top of the Jobs tab): qualified / near misses / median / fetched → used; **Where you qualify**
+  (title + company; click to open the posting on its portal) and near misses with the one thing blocking each;
+  breakdowns by source, company, location, freshness and workplace (click a bar to filter the table); and how the
+  jobs were chosen (fetched → matching title → filters → unique → used, with drop reasons).
+- **AI apply strategy**: which jobs to apply to now / after tailoring / as a stretch, with what to tailor and the
+  risk; invented job ids are dropped and blocked jobs can't be "apply now" unless the risk names the blocker.
+  **AI career report**: market fit, strongest areas, adjacent roles and a 4-week gap plan. Optional **auto deep-check**
+  of your top 5/10/25 jobs (skipped if the estimate exceeds `AUTO_DEEP_MAX_USD`, default $0.50).
+- **Saved job links**: paste links (or any text containing them) or use *Paste from clipboard*; they're kept on the
+  server for your browser/account until you discard them, every search fetches them, and each shows ✓ fetched or the
+  reason it failed. Up to **500 jobs** per search; thin postings are filled in from their own pages (description,
+  salary).
+- **Clear session** (sidebar / ⌘K): discards this tab's resume, form and cached reports; optionally forgets the AI key
+  or deletes your saved data on the server. Pages that crash show a recovery card instead of a blank app.
 - **Reports** (history), **Applications**, **Watches**, **Market**, **Settings**, and **Eval Studio** (below).
 
 ## Run
@@ -95,7 +109,7 @@ firewalls commonly block `www.linkedin.com` or `api.openai.com`; allow those or 
 ## Tests and evaluation
 
 ```bash
-python -m pytest --ignore=tests/e2e     # 255 tests (API, sources, matcher, gates, agents, evals, accounts, tracker…)
+python -m pytest --ignore=tests/e2e     # 264 tests (API, sources, matcher, gates, agents, evals, accounts, tracker…)
 TEST_DATABASE_URL=postgresql+psycopg://user@localhost/db python -m pytest --ignore=tests/e2e   # same suite on Postgres
 python -m pytest tests/e2e             # Playwright: the whole UI against the demo server
 python -m eval.run --check             # all suites (LLM ones against the adversarial mock); fails on regressions (CI)
@@ -107,7 +121,8 @@ cd frontend && npm run build           # typecheck + production build
 Every AI component has a suite with gold data built *by construction* (synthetic resumes and postings across ten
 occupations where the right answer is determined by the text): deep verifier, consistency (3 runs per case),
 requirement extractor, prompt-injection safety, search planner, interview feedback, career coach, insight narrator,
-tailoring agent, and an LLM judge sanity check. Each suite separates what the **model** did (`raw_*`) from what the
+tailoring agent, apply strategy, and an LLM judge sanity check. Deterministic suites include job-title `relevance`
+(83 query/title pairs across ten occupations) and quote `evidence` relevance. Each suite separates what the **model** did (`raw_*`) from what the
 **system** let through after server-side checks (`final_*`, defense metrics).
 
 | Mode | What it does | Cost |

@@ -72,7 +72,8 @@ export function JobsTable({ jobs, threshold, onOpen, bulk, toolbarExtra }: {
   const setParam = (k: string, v: string | null) => setParams((p) => { const n = new URLSearchParams(p); if (!v) n.delete(k); else n.set(k, v); return n; }, { replace: true });
   const q = params.get("q") ?? "";
   const status = (params.get("st") ?? "").split(",").filter(Boolean);
-  const [sources, setSources] = useState<string[]>([]);
+  const sources = (params.get("src") ?? "").split(",").filter(Boolean);
+  const setSources = (v: string[]) => setParam("src", v.join(",") || null);
   const [work, setWork] = useState<string[]>([]);
   const [verified, setVerified] = useState<string[]>([]);
   const [sorting, setSorting] = useState<SortingState>(() => {
@@ -111,7 +112,7 @@ export function JobsTable({ jobs, threshold, onOpen, bulk, toolbarExtra }: {
       && (!work.length || work.includes(workplace(j)))
       && (!verified.length || verified.includes(j.deep ? "yes" : "no"))
       && (!f || `${j.title} ${j.company} ${j.location} ${j.matched_skills.join(" ")}`.toLowerCase().includes(f)));
-  }, [jobs, q, status.join(), sources, work, verified, threshold]);  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [jobs, q, status.join(), sources.join(), work, verified, threshold]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   const columns = useMemo<ColumnDef<ScoredJob>[]>(() => [
     {

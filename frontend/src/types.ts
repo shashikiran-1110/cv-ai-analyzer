@@ -16,7 +16,7 @@ export interface SearchPlan {
 export interface SourceInfo { id: string; name: string; kind: string; remote_only: boolean; needs: string; note: string; host: string }
 export interface SourceStat {
   id: string; name: string; status: "running" | "done" | "error"; fetched: number; kept: number; selected?: number;
-  message: string; kind?: string; progress?: { stage: string; done: number; total: number } | null;
+  message: string; kind?: string; progress?: { stage: string; done: number; total: number } | null; dropped?: Record<string, number>;
 }
 export interface JobSummary {
   id: string; title: string; company: string; location: string; url: string; posted: string;
@@ -26,6 +26,7 @@ export interface JobSummary {
 export interface SearchStatus {
   status: "running" | "done" | "error"; stage: string; done: number; total: number;
   error: string | null; query: SearchQuery; jobs?: JobSummary[]; warnings?: string[]; sources?: SourceStat[]; cached?: boolean;
+  funnel?: Funnel; enrich?: { done: number; total: number } | null;
   linkedin?: { stage: string; done: number; total: number } | null;
 }
 export interface ReqCheck {
@@ -65,12 +66,25 @@ export interface Summary {
 export interface LearnItem { skill: string; why: string; how?: string; jobs?: number | null }
 export interface Insights {
   source: string; summary: string; strengths: string[]; improvements: string[];
-  skills_to_learn: LearnItem[]; ai_error?: string; unverified_numbers?: string[];
+  skills_to_learn: LearnItem[]; ai_error?: string; unverified_numbers?: string[]; unsupported_strengths?: string[];
+  market_fit?: string; strongest_areas?: string[]; career_paths?: { title: string; why: string; gap: string }[];
+  gap_plan?: { week: number; focus: string; outcome: string }[];
 }
+export interface StrategyPick {
+  job_id: string; title: string; company: string; score: number; qualifies: boolean; gates_failed: string[];
+  priority: 1 | 2 | 3; why: string; tailor_points: string[]; risk: string; demoted: boolean;
+}
+export interface Strategy {
+  pending?: boolean; error?: string; shortlist?: StrategyPick[]; skip?: { job_id: string; title: string; company: string; score: number; reason: string }[];
+  themes?: string[]; next_steps?: string[]; dropped_ids?: string[]; unverified_numbers?: string[]; model?: string;
+}
+export interface AutoDeep { status: "queued" | "running" | "done" | "skipped"; done: number; total: number; estimate_usd?: number | null; reason?: string; errors?: string[] }
+export interface Funnel { fetched?: number; relevant?: number; after_filters?: number; unique?: number; selected?: number; enriched?: number }
+export interface SavedLink { id: number; url: string; status: "new" | "ok" | "failed"; title: string | null; company: string | null; message: string | null; added_at: number; last_fetched: number | null }
 export interface Analysis {
   analysis_id: string; extra_skills: string[]; unknown_skills: string[]; query: SearchQuery;
   summary: Summary; jobs: ScoredJob[]; insights: Insights & { pending?: boolean };
-  insights_run_id?: string | null; resume_id?: string; search_id?: string;
+  insights_run_id?: string | null; resume_id?: string; search_id?: string; strategy?: Strategy; auto_deep?: AutoDeep;
 }
 export interface JobDetail { id: string; title: string; company: string; location: string; url: string; description: string }
 export interface AppConfig { max_jobs: number; default_threshold: number; server_ai: Provider | null; default_models: Record<Provider, string> }
@@ -150,7 +164,7 @@ export interface AnalysisListItem {
   qualifying: number; threshold: number; avg_score: number; best_score: number; best_title: string; verified: number;
 }
 export type FeedbackKind = "requirement" | "deep_requirement" | "insights" | "coach" | "assistant" | "tool" | "tailoring_edit"
-  | "interview_feedback" | "planner" | "extractor" | "job_score";
+  | "interview_feedback" | "planner" | "extractor" | "job_score" | "strategy";
 export interface FeedbackSummary { kind: string; total: number; up: number; down: number; corrections: number; approval: number | null }
 export interface FeedbackItem {
   id: number; kind: string; analysis_id: string; job_id: string; item_id: string; rating: number; correction: Record<string, unknown> | null;

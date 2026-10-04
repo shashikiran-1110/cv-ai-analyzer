@@ -7,6 +7,7 @@ import type { SearchParams } from "../types";
 import { useSetup } from "../state/setup";
 import { PlanCard } from "./PlanCard";
 import { ResumeCard, resumeReady } from "./ResumeCard";
+import { useSavedLinks } from "./SavedLinks";
 import { parsePasted, sourcesPayload, sourcesProblem, SourcesPicker } from "./SourcesPicker";
 
 const TIME = [["24h", "24 hours"], ["week", "Week"], ["month", "Month"], ["any", "Any"], ["custom", "Custom"]] as const;
@@ -35,7 +36,8 @@ export function SetupStep({ openDiagnose }: { openDiagnose: () => void }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [moreFilters, setMoreFilters] = useState(false);
-  const max = ai.config?.max_jobs ?? 100;
+  const max = ai.config?.max_jobs ?? 500;
+  const saved = (useSavedLinks().data ?? []).map((l) => l.url);
   const upd = (patch: Partial<SearchParams>) => setParams({ ...p, ...patch });
   // a validation/run error is stale once the user changes what it was about
   useEffect(() => { if (!busy) setErr(""); }, [resume.preview, p.title, sources]);  // eslint-disable-line react-hooks/exhaustive-deps
@@ -45,7 +47,7 @@ export function SetupStep({ openDiagnose }: { openDiagnose: () => void }) {
     : titleNeeded && p.title.trim().length < 2 ? "Enter the job title you're looking for."
     : titleNeeded && !(p.count >= 1 && p.count <= max) ? `Number of posts must be 1–${max}.`
     : titleNeeded && p.time_range === "custom" && !(opts.hours >= 1 && opts.hours <= 2160) ? "Custom hours must be 1–2160."
-    : sourcesProblem(sources);
+    : sourcesProblem(sources, saved);
 
   async function run() {
     if (problem) { setErr(problem); return; }
@@ -58,7 +60,7 @@ export function SetupStep({ openDiagnose }: { openDiagnose: () => void }) {
         ({ search_id: searchId } = await post<{ search_id: string }>("/api/search/sample", { title: p.title.trim() }));
       } else {
         const body = { ...p, title: p.title.trim(), location: p.location.trim(), count: Math.round(p.count),
-          ...(p.time_range === "custom" ? { custom_hours: Math.round(opts.hours) } : {}), ...sourcesPayload(sources) };
+          ...(p.time_range === "custom" ? { custom_hours: Math.round(opts.hours) } : {}), ...sourcesPayload(sources, saved) };
         ({ search_id: searchId } = await post<{ search_id: string }>("/api/search", body));
       }
       navigate(`/search/${searchId}${opts.review ? "" : "?auto=1"}`);
@@ -70,7 +72,7 @@ export function SetupStep({ openDiagnose }: { openDiagnose: () => void }) {
   const checks: { ok: boolean; label: string; detail: string }[] = [
     { ok: resumeReady(resume), label: "Resume", detail: resume.preview ? `${resume.preview.words} words · ${resume.preview.skills.length} skills` : "Upload a PDF or paste text" },
     { ok: !titleNeeded || p.title.trim().length >= 2, label: "Role", detail: p.title.trim() ? `${p.title.trim()}${p.location.trim() ? ` · ${p.location.trim()}` : ""}` : titleNeeded ? "Enter a job title" : "Optional" },
-    { ok: !sourcesProblem(sources), label: "Sources",
+    { ok: !sourcesProblem(sources, saved), label: "Sources",
       detail: sources.mode === "portals" ? `${sources.selected.length} selected · up to ${p.count} posts` : sources.mode === "paste" ? `${pasted} pasted job${pasted === 1 ? "" : "s"}` : "14 sample postings" },
     { ok: ai.usable, label: "AI (optional)", detail: ai.usable ? (ai.settings.key ? `${ai.settings.provider === "openai" ? "OpenAI" : "Anthropic"} key set` : "Server key") : "Rules-only analysis" },
   ];
@@ -147,6 +149,12 @@ export function SetupStep({ openDiagnose }: { openDiagnose: () => void }) {
               <label className="check"><input type="checkbox" checked={opts.wantAi && ai.usable} disabled={!ai.usable} onChange={(e) => setOpts({ ...opts, wantAi: e.target.checked })} />
                 <span>AI-written advice {ai.usable ? <small>(sends resume text to your AI provider)</small> : <button type="button" className="link" onClick={() => ai.openModal(true)}>add a key</button>}</span></label>
               <label className="check"><input type="checkbox" checked={opts.review} onChange={(e) => setOpts({ ...opts, review: e.target.checked })} /><span>Let me review the jobs before analyzing</span></label>
+              <label className="field" style={{ fontWeight: 400 }}><span>Deep-check my top jobs with AI <small>(verified, quote by quote)</small></span>
+                <select value={ai.usable && opts.wantAi ? opts.autoDeep : 0} disabled={!ai.usable || !opts.wantAi} aria-label="Auto deep-check"
+                  onChange={(e) => setOpts({ ...opts, autoDeep: +e.target.value })}>
+                  <option value={0}>Off (run it from the report)</option><option value={5}>Top 5</option><option value={10}>Top 10</option><option value={25}>Top 25</option>
+                </select>
+                {opts.autoDeep > 0 && ai.usable && opts.wantAi && <small>Skipped automatically if the estimate is above the cost cap; you'll see the estimate in the report.</small>}</label>
             </div>
           </div>
           {err && (

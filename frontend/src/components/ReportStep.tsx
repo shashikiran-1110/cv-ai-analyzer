@@ -11,6 +11,8 @@ import { HBars, ScoreHistogram } from "./charts";
 import { Feedback } from "./Feedback";
 import { IconWarn } from "./Icons";
 import { JobDrawer } from "./JobDrawer";
+import { JobsAnalytics } from "./JobsAnalytics";
+import { AutoDeepBanner, CareerReport, StrategyCard } from "./AiReport";
 import { Markdown } from "./Markdown";
 import { useRegisterCommands } from "./shell/ShellProvider";
 import { SkillsTab } from "./SkillsTab";
@@ -45,10 +47,18 @@ export function ReportStep({ initial, notes = [] }: { initial: Analysis; notes?:
   });
 
   // AI advice arrives after the deterministic results (ROADMAP §3.5)
-  useRunEvents(a.insights.pending ? a.insights_run_id : null, (e) => {
-    if (e.type === "insight.ready") { setA((p) => ({ ...p, insights: e.data.insights, insights_run_id: null })); toast("AI advice is ready.", "ok"); }
-    if (e.type === "run.finished" && e.data.status === "error") setA((p) => ({ ...p, insights: { ...p.insights, pending: false, ai_error: "AI advice failed." } }));
-  }, () => { void api<Analysis>(`/api/analysis/${a.analysis_id}`).then((x) => setA({ ...x, insights: { ...x.insights, pending: false } })); });
+  // one background run streams: AI advice → apply strategy → auto deep-checks (each step independently)
+  const refetch = () => api<Analysis>(`/api/analysis/${a.analysis_id}`).then((x) => setA((p) => ({ ...p, ...x })));
+  useRunEvents(a.insights_run_id ?? null, (e) => {
+    if (e.type === "insight.ready") { setA((p) => ({ ...p, insights: e.data.insights })); toast("AI advice is ready.", "ok"); }
+    if (e.type === "strategy.ready") setA((p) => ({ ...p, strategy: e.data.strategy }));
+    if (e.type === "deep.progress" || e.type === "deep.skipped") setA((p) => ({ ...p, auto_deep: e.data }));
+    if (e.type === "deep.done") { void refetch(); toast(`AI verified your top ${e.data.total} jobs.`, "ok"); }
+    if (e.type === "run.finished") {
+      if (e.data.status === "error") setA((p) => ({ ...p, insights: { ...p.insights, pending: false, ai_error: p.insights.ai_error || "AI advice failed." } }));
+      void refetch().then(() => setA((p) => ({ ...p, insights_run_id: null })));
+    }
+  }, () => { void refetch().then(() => setA((p) => ({ ...p, insights: { ...p.insights, pending: false }, insights_run_id: null }))); });
   const [extra, setExtraState] = useState<string[]>(initial.extra_skills);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -219,6 +229,8 @@ export function ReportStep({ initial, notes = [] }: { initial: Analysis; notes?:
       {tab === "overview" && <Overview a={a} extra={extra} threshold={threshold} setThreshold={setThreshold} qualifying={qualifying}
         delta={extra.length ? qualifying - baseQual : 0} verified={verified} onTab={setTab} gated={gated} />}
       {tab === "jobs" && <>
+        <AutoDeepBanner a={a} />
+        <JobsAnalytics a={a} threshold={threshold} onOpen={onOpenJob} />
         <div className="card deep-card">
           <div className="deep-title"><ShieldCheck aria-hidden="true" /><div><b>Deep AI check</b>
             <div className="muted" style={{ margin: 0 }}>The AI re-judges each job's requirements and must quote your resume; the server checks every quote exists and is relevant. Only verified judgements change a requirement, then the normal formula is re-applied.{verified ? ` ${verified} job${verified > 1 ? "s" : ""} checked.` : ""}</div></div></div>
@@ -328,6 +340,10 @@ function Overview({ a, extra, threshold, setThreshold, qualifying, delta, verifi
             <Feedback target={{ kind: "insights", analysisId: a.analysis_id, output: [ins.summary, ...ins.strengths, ...ins.improvements].join("\n") }} label="this advice" /></div>}
         </div>
       )}
+
+      <AutoDeepBanner a={a} />
+      <StrategyCard a={a} threshold={threshold} />
+      <CareerReport a={a} />
 
       <div className="overview-grid">
         <div className="card"><h2>Score distribution</h2><ScoreHistogram scores={a.jobs.map((j) => j.score)} threshold={threshold} /></div>

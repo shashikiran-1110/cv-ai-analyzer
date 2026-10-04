@@ -12,6 +12,7 @@ interface Shell {
   shortcuts: boolean; setShortcuts: (v: boolean) => void;
   diag: boolean; setDiag: (v: boolean) => void;
   navOpen: boolean; setNavOpen: (v: boolean) => void;
+  clearOpen: boolean; setClearOpen: (v: boolean) => void;
   collapsed: boolean; setCollapsed: (v: boolean) => void;
   commands: Cmd[]; register: (key: string, cmds: Cmd[]) => void; unregister: (key: string) => void;
 }
@@ -33,6 +34,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
   const [shortcuts, setShortcuts] = useState(false);
   const [diag, setDiag] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
+  const [clearOpen, setClearOpen] = useState(false);
   const [collapsed, setCollapsedState] = useState(() => read("cvm.side", "") === "collapsed");
   const [registry, setRegistry] = useState<Record<string, Cmd[]>>({});
 
@@ -60,8 +62,8 @@ export function ShellProvider({ children }: { children: ReactNode }) {
   const commands = useMemo(() => Object.values(registry).flat(), [registry]);
   const value = useMemo<Shell>(() => ({
     theme, setTheme, cycleTheme, palette, setPalette, shortcuts, setShortcuts, diag, setDiag,
-    navOpen, setNavOpen, collapsed, setCollapsed, commands, register, unregister,
-  }), [theme, setTheme, cycleTheme, palette, shortcuts, diag, navOpen, collapsed, setCollapsed, commands, register, unregister]);
+    navOpen, setNavOpen, clearOpen, setClearOpen, collapsed, setCollapsed, commands, register, unregister,
+  }), [theme, setTheme, cycleTheme, palette, shortcuts, diag, navOpen, clearOpen, collapsed, setCollapsed, commands, register, unregister]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 

@@ -30,17 +30,24 @@ export function ScoreHistogram({ scores, threshold, bins = 10 }: { scores: numbe
   );
 }
 
-export function HBars({ rows, total, tone = "brand" }: { rows: { label: string; value: number; hint?: string }[]; total: number; tone?: "brand" | "warn" | "good" }) {
+export function HBars({ rows, total, tone = "brand", onPick, show = "pct" }: {
+  rows: { label: string; value: number; hint?: string; sub?: number }[]; total: number; tone?: "brand" | "warn" | "good";
+  onPick?: (label: string) => void; show?: "pct" | "count";
+}) {
   const max = Math.max(1, ...rows.map((r) => r.value));
   return (
     <div className="hbars">
-      {rows.map((r) => (
-        <div className="hbar" key={r.label} title={r.hint}>
+      {rows.map((r) => {
+        const body = <>
           <span>{r.label}</span>
-          <div className="meter" aria-hidden="true"><i className={tone} style={{ width: `${(r.value / max) * 100}%` }} /></div>
-          <em>{total ? `${Math.round((r.value / total) * 100)}%` : r.value}</em>
-        </div>
-      ))}
+          <div className="meter stacked" aria-hidden="true"><i className={tone} style={{ width: `${(r.value / max) * 100}%` }} />
+            {r.sub !== undefined && <i className="good sub" style={{ width: `${(r.sub / max) * 100}%` }} />}</div>
+          <em>{show === "count" ? (r.sub !== undefined ? `${r.sub}/${r.value}` : r.value) : total ? `${Math.round((r.value / total) * 100)}%` : r.value}</em>
+        </>;
+        return onPick
+          ? <button type="button" className="hbar clickable" key={r.label} title={r.hint ?? `Show ${r.label} in the table`} onClick={() => onPick(r.label)}>{body}</button>
+          : <div className="hbar" key={r.label} title={r.hint}>{body}</div>;
+      })}
     </div>
   );
 }

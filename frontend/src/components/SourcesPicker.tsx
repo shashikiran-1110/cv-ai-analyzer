@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, post } from "../api";
+import { extractUrls, SavedLinks } from "./SavedLinks";
 import type { SourceInfo } from "../types";
 
 export interface SourceConfig {
@@ -39,7 +40,10 @@ export function parsePasted(text: string): PastedJob[] {
 
 const splitList = (s: string) => s.split(/[\s,]+/).map((x) => x.trim()).filter(Boolean);
 
-export function sourcesProblem(c: SourceConfig): string {
+/** Links the search will fetch: the saved list plus anything still in the box (not yet auto-saved). */
+export const linkUrls = (c: SourceConfig, saved: string[] = []) => [...new Set([...saved, ...extractUrls(c.urls)])].slice(0, 100);
+
+export function sourcesProblem(c: SourceConfig, saved: string[] = []): string {
   if (c.mode === "paste") {
     const jobs = parsePasted(c.paste);
     if (!jobs.length) return "Paste at least one job posting.";
@@ -51,17 +55,17 @@ export function sourcesProblem(c: SourceConfig): string {
   if (!c.selected.length) return "Pick at least one source.";
   for (const k of COMPANY_KINDS)
     if (c.selected.includes(k) && !splitList(c.companies[k] ?? "").length) return `Add company slugs for ${k[0].toUpperCase() + k.slice(1)} or untick it.`;
-  if (c.selected.includes("urls") && !splitList(c.urls).length) return "Paste at least one job URL or untick “Job URLs”.";
+  if (c.selected.includes("urls") && !linkUrls(c, saved).length) return "Save at least one job link, or untick “Job links”.";
   if (c.selected.includes("adzuna") && !(c.adzuna.app_id && c.adzuna.app_key)) return "Enter your Adzuna App ID and Key, or untick Adzuna.";
   if (c.selected.includes("usajobs") && !(c.usajobs?.email && c.usajobs?.key)) return "Enter your USAJOBS email and API key, or untick USAJOBS.";
   return "";
 }
 
-export function sourcesPayload(c: SourceConfig) {
+export function sourcesPayload(c: SourceConfig, saved: string[] = []) {
   return {
     sources: c.selected,
     companies: Object.fromEntries(COMPANY_KINDS.filter((k) => c.selected.includes(k)).map((k) => [k, splitList(c.companies[k] ?? "")])),
-    urls: c.selected.includes("urls") ? splitList(c.urls) : [],
+    urls: c.selected.includes("urls") ? linkUrls(c, saved) : [],
     adzuna: c.selected.includes("adzuna") ? c.adzuna : null,
     usajobs: c.selected.includes("usajobs") ? c.usajobs : null,
   };
@@ -148,11 +152,11 @@ export function SourcesPicker({ value, onChange }: { value: SourceConfig; onChan
             </div>
           ))}
           {groups.urls.map((s) => (
-            <div key={s.id} className={`src col ${value.selected.includes(s.id) ? "on" : ""}`}>
-              <label className="check"><input type="checkbox" checked={value.selected.includes(s.id)} onChange={() => toggle(s.id)} /><b>{s.name}</b></label>
-              <textarea rows={3} placeholder={"https://wellfound.com/jobs/…\nhttps://jobs.lever.co/acme/…\nhttps://www.linkedin.com/jobs/view/…"} value={value.urls} aria-label="Job URLs"
-                onChange={(e) => onChange({ ...value, urls: e.target.value, selected: e.target.value.trim() && !value.selected.includes(s.id) ? [...value.selected, s.id] : value.selected })} />
-              <small>Up to 25 links. Wellfound has no public API and often blocks automated requests; if it does, use “Paste jobs”.</small>
+            <div key={s.id} className={`src col span-all ${value.selected.includes(s.id) ? "on" : ""}`}>
+              <label className="check"><input type="checkbox" checked={value.selected.includes(s.id)} onChange={() => toggle(s.id)} /><b>Saved job links</b><em className="mini">up to 100 per search</em></label>
+              <SavedLinks text={value.urls}
+                onText={(t) => onChange({ ...value, urls: t, selected: t.trim() && !value.selected.includes(s.id) ? [...value.selected, s.id] : value.selected })}
+                onHasLinks={() => { if (!value.selected.includes(s.id)) onChange({ ...value, selected: [...value.selected, s.id] }); }} />
             </div>
           ))}
         </div>

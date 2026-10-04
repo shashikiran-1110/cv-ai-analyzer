@@ -3,9 +3,9 @@ import type { SearchParams } from "../types";
 import { EMPTY_RESUME, type ResumeState } from "../components/ResumeCard";
 import { DEFAULT_SOURCES, type SourceConfig } from "../components/SourcesPicker";
 
-export interface Options { threshold: number; wantAi: boolean; review: boolean; hours: number }
+export interface Options { threshold: number; wantAi: boolean; review: boolean; hours: number; autoDeep: number }
 export const DEFAULT_PARAMS: SearchParams = { title: "", location: "", count: 40, time_range: "week", experience: [], job_types: [], workplace: [], sort: "recent", strict: true };
-const DEFAULT_OPTS: Options = { threshold: 60, wantAi: true, review: false, hours: 72 };
+const DEFAULT_OPTS: Options = { threshold: 60, wantAi: true, review: false, hours: 72, autoDeep: 0 };
 const KEY = "cvm.setup.v2";
 
 interface Setup {
@@ -13,6 +13,7 @@ interface Setup {
   params: SearchParams; setParams: (p: SearchParams) => void;
   sources: SourceConfig; setSources: (s: SourceConfig) => void;
   opts: Options; setOpts: (o: Options) => void;
+  reset: () => void;
 }
 const Ctx = createContext<Setup | null>(null);
 export const useSetup = () => { const c = useContext(Ctx); if (!c) throw new Error("SetupProvider missing"); return c; };
@@ -34,5 +35,9 @@ export function SetupProvider({ children }: { children: ReactNode }) {
       sessionStorage.setItem(KEY, JSON.stringify({ resume: r, params, sources, opts }));
     } catch { /* storage full or blocked */ }
   }, [resume, params, sources, opts]);
-  return <Ctx.Provider value={{ resume, setResume, params, setParams, sources, setSources, opts, setOpts }}>{children}</Ctx.Provider>;
+  const reset = () => {
+    try { sessionStorage.removeItem(KEY); } catch { /* blocked */ }
+    setResume(EMPTY_RESUME); setParams(DEFAULT_PARAMS); setSources(DEFAULT_SOURCES); setOpts(DEFAULT_OPTS);
+  };
+  return <Ctx.Provider value={{ resume, setResume, params, setParams, sources, setSources, opts, setOpts, reset }}>{children}</Ctx.Provider>;
 }

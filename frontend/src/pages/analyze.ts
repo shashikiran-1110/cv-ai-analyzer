@@ -18,5 +18,6 @@ export async function startAnalysis(searchId: string, jobIds: string[] | null, r
   fd.append("use_ai", aiOn ? "true" : "false");
   if (jobIds) fd.append("job_ids", JSON.stringify(jobIds));
   fd.append("extra_skills", JSON.stringify(resume.extra));
+  if (aiOn && opts.autoDeep > 0) fd.append("auto_deep", String(opts.autoDeep));
   return api<Analysis>("/api/analyze", { method: "POST", body: fd, headers: aiOn ? aiHeaders(ai.settings) : {} });
 }
