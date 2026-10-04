@@ -100,7 +100,7 @@ def parse_job_page(html: str, url: str) -> Optional[Job]:
 
 
 async def import_urls(q: JobQuery, client: httpx.AsyncClient) -> list[Job]:
-    urls = [u.strip() for u in q.urls if u.strip()][:25]
+    urls = list(dict.fromkeys(u.strip() for u in q.urls if u.strip()))[:100]
     if not urls:
         raise SourceError("Paste at least one job URL.", "config")
 
@@ -141,7 +141,15 @@ async def import_urls(q: JobQuery, client: httpx.AsyncClient) -> list[Job]:
                               + (f" ({brand} may have served a bot check)." if brand else "."), "http")
         return job
 
-    results = await asyncio.gather(*(one(u) for u in urls), return_exceptions=True)
+    sem = asyncio.Semaphore(8)
+
+    async def bounded(u: str) -> Job:
+        async with sem:
+            return await one(u)
+    results = await asyncio.gather(*(bounded(u) for u in urls), return_exceptions=True)
+    for u, r in zip(urls, results):           # per-link outcome (shown in the saved-links list)
+        q.url_results[u] = ({"ok": True, "title": r.title, "company": r.company, "message": ""} if isinstance(r, Job)
+                            else {"ok": False, "title": "", "company": "", "message": str(r)[:300]})
     jobs = [r for r in results if isinstance(r, Job)]
     errors = [str(r) for r in results if isinstance(r, Exception)]
     if errors and not jobs:

@@ -23,7 +23,14 @@ NOISE = set("senior sr junior jr lead principal staff associate intern internshi
 SYN = {"developer": "engineer", "dev": "engineer", "programmer": "engineer", "engineering": "engineer",
        "swe": "software", "sde": "software", "js": "javascript", "golang": "go", "k8s": "kubernetes",
        "analytics": "analyst", "scientist": "science", "designers": "designer", "mgr": "manager",
-       "management": "manager", "administrator": "admin", "ops": "operations"}
+       "management": "manager", "administrator": "admin", "ops": "operations", "mathematics": "math", "maths": "math"}
+# The noun that names the job. If a title's role noun differs from the query's ("Engineering Manager" vs "Engineer",
+# "Nurse Practitioner" vs "Nurse"), it's a different job even when the other words match (eval: relevance suite).
+ROLE_NOUNS = set("engineer analyst science manager director designer nurse practitioner teacher tutor lecturer professor "
+                 "accountant coordinator specialist consultant architect admin technician assistant officer representative "
+                 "executive paralegal attorney lawyer recruiter writer editor clerk operator driver advocate dietitian "
+                 "receptionist secretary therapist pharmacist physician researcher instructor planner buyer auditor "
+                 "controller strategist marketer agent supervisor".split())
 PHRASES = [(r"front[\s-]*end", "frontend"), (r"back[\s-]*end", "backend"), (r"full[\s-]*stack", "fullstack"),
            (r"\bml\b", "machine learning"), (r"\bsre\b", "site reliability"), (r"\bqa\b", "quality assurance"),
            (r"\bui\s*/\s*ux\b", "ux"), (r"\bdev\s*ops\b", "devops"), (r"\bdata\s*base", "database")]
@@ -108,10 +115,19 @@ def query_relevance(job: Job, q: JobQuery) -> float:
     return max([relevance(job, core_tokens(q.title))] + [relevance(job, core_tokens(t)) for t in q.alt_titles[:12]])
 
 
+def role_noun(tokens: list[str]) -> Optional[str]:
+    """Last role noun in a title ("Senior Data Engineer, Platform" → engineer; "Engineering Manager, Data" → manager)."""
+    return next((t for t in reversed(tokens) if t in ROLE_NOUNS), None)
+
+
 def relevance(job: Job, core: list[str]) -> float:
     if not core:
         return 1.0
-    tt = set(norm_tokens(job.title))
+    toks = norm_tokens(job.title)
+    tt = set(toks)
+    q_role, t_role = role_noun(core), role_noun(toks)
+    if q_role and t_role and q_role != t_role:
+        return 0.3            # a different job that shares words: never passes the relevance bar
     hits = sum(t in tt for t in core) / len(core)
     if hits >= 1:
         return 1.0
@@ -182,6 +198,10 @@ def filters_ok(job: Job, q: JobQuery) -> tuple[bool, str]:
         if re.search(r"\b(intern|internship|junior|jr\.?|graduate|trainee)\b", t) and exp <= {"mid_senior", "director", "executive"}:
             return False, "experience"
     return True, ""
+
+
+DROP_KEYS = {"older than time range": "too_old", "location": "location", "workplace": "workplace",
+             "job type": "job_type", "experience": "experience"}
 
 
 def _norm_company(c: str) -> str:
@@ -290,7 +310,8 @@ async def run(q: JobQuery, sources: list[Source], on_update: Optional[StatsCb] =
                 async def lp(stage, done, total):
                     st["progress"] = {"stage": stage, "done": done, "total": total}
                     await push()
-                jobs = await asyncio.wait_for(src.fetch(q, client, lp), src.timeout)
+                # big requests read many detail pages: allow 0.6 s per job on top of the base timeout (max 15 min)
+                jobs = await asyncio.wait_for(src.fetch(q, client, lp), min(900.0, src.timeout + 0.6 * q.count))
             else:
                 jobs = await asyncio.wait_for(src.fetch(q, client), src.timeout)
             st.update(status="done", fetched=len(jobs))
@@ -327,25 +348,49 @@ async def run(q: JobQuery, sources: list[Source], on_update: Optional[StatsCb] =
     user_chosen = {"urls", "manual"}           # the user picked these postings: never filtered out
     threshold = 0.75 if q.strict else 0.5
     candidates: list[tuple[float, Job]] = []
+    origin: dict[int, str] = {}
+    funnel = {"fetched": 0, "relevant": 0, "after_filters": 0, "unique": 0, "selected": 0}
     for src, jobs in zip(sources, results):
         kept = 0
+        dropped: dict[str, int] = {}
         for j in jobs:
+            funnel["fetched"] += 1
             if not j.title:
+                dropped["no_title"] = dropped.get("no_title", 0) + 1
                 continue
             rel = query_relevance(j, q) if (q.alt_titles or q.exclude_titles) else relevance(j, core)
             if src.id not in user_chosen and rel < threshold and (q.strict or src.id != "linkedin"):
+                dropped["title"] = dropped.get("title", 0) + 1
                 continue
-            ok, _ = filters_ok(j, q) if src.id not in user_chosen else (True, "")
+            funnel["relevant"] += 1
+            ok, why = filters_ok(j, q) if src.id not in user_chosen else (True, "")
             if not ok:
+                key = DROP_KEYS.get(why, why.replace(" ", "_"))
+                dropped[key] = dropped.get(key, 0) + 1
                 continue
+            funnel["after_filters"] += 1
             j.extra["relevance"] = round(rel, 2)
             candidates.append((rank_score(j, rel, q), j))
+            origin[id(j)] = src.id
             kept += 1
         stats[src.id]["kept"] = kept
+        stats[src.id]["dropped"] = dropped
     unique = {id(j) for j in dedupe([j for _, j in candidates])}
     deduped = [(s, j) for s, j in candidates if id(j) in unique]
+    for jid, sid in origin.items():
+        if jid not in unique:
+            d = stats[sid]["dropped"]
+            d["duplicate"] = d.get("duplicate", 0) + 1
+    funnel["unique"] = len(deduped)
     final = pick(deduped, q.count)
+    funnel["selected"] = len(final)
+    chosen_ids = {id(j) for j in final}
+    for _, j in deduped:
+        if id(j) not in chosen_ids:
+            d = stats[origin[id(j)]]["dropped"]
+            d["over_limit"] = d.get("over_limit", 0) + 1
     for s in sources:
         stats[s.id]["selected"] = sum(1 for j in final if j.source == JOB_SOURCE.get(s.id, s.id))
+    q.funnel = funnel
     await push()
     return final, stats, warnings

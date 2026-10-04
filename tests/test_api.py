@@ -63,7 +63,7 @@ async def test_full_flow(client, resume_pdf):
 async def test_validation_and_errors(client, resume_pdf):
     async with client as c:
         assert (await c.post("/api/search", json={"title": "x", "count": 5})).status_code == 422
-        assert (await c.post("/api/search", json={"title": "data", "count": 500})).status_code == 422
+        assert (await c.post("/api/search", json={"title": "data", "count": 501})).status_code == 422   # max is 500
         assert (await c.post("/api/search", json={"title": "data", "time_range": "custom"})).status_code == 422
         assert (await c.post("/api/search", json={"title": "data", "time_range": "bogus"})).status_code == 422
         assert (await c.get("/api/search/nope")).status_code == 404
@@ -174,8 +174,9 @@ async def test_ai_insights_via_browser_key(client, resume_pdf, monkeypatch):
         body = await _analyzed(c, resume_pdf, HDR, use_ai="true")
         assert body["insights"]["source"] == "local" and body["insights"]["pending"]   # results first, AI later
         events = await _run_events(c, body["insights_run_id"])
-        assert [e for e, _ in events][-2:] == ["insight.ready", "run.finished"]
-        ins = dict(events)["insight.ready"]["insights"]
+        names = [e for e, _ in events]
+        assert "insight.ready" in names and names[-1] == "run.finished" and names.index("insight.ready") < names.index("strategy.ready")
+        ins =dict(events)["insight.ready"]["insights"]
         restored = (await c.get(f"/api/analysis/{body['analysis_id']}")).json()
     assert restored["insights"]["source"] == "openai" and restored["insights_run_id"] is None
     assert ins["source"] == "openai" and ins["summary"] == "Solid fit."

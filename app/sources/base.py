@@ -29,6 +29,9 @@ class JobQuery:
     strict: bool = True                                              # require the job title to match the query
     alt_titles: list[str] = field(default_factory=list)              # Search Planner: other titles that also count
     exclude_titles: list[str] = field(default_factory=list)          # …and titles to drop ("sales engineer")
+    # outputs filled during the run (read by the caller)
+    funnel: dict = field(default_factory=dict)                       # fetched → relevant → after filters → unique → selected
+    url_results: dict = field(default_factory=dict)                  # Job URLs: url -> {ok, title, company, message}
 
 
 class SourceError(Exception):

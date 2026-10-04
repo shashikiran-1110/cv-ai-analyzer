@@ -1,0 +1,83 @@
+{"id": "rel000", "query": "Data Engineer", "title": "Data Engineer", "description": "", "relevant": true}
+{"id": "rel001", "query": "Data Engineer", "title": "Senior Data Engineer", "description": "", "relevant": true}
+{"id": "rel002", "query": "Data Engineer", "title": "Data Engineer II", "description": "", "relevant": true}
+{"id": "rel003", "query": "Data Engineer", "title": "Big Data Engineer", "description": "", "relevant": true}
+{"id": "rel004", "query": "Data Engineer", "title": "Data Engineer (Python/AWS)", "description": "", "relevant": true}
+{"id": "rel005", "query": "Data Engineer", "title": "Lead Data Engineer - Platform", "description": "", "relevant": true}
+{"id": "rel006", "query": "Data Engineer", "title": "Junior Data Engineer", "description": "", "relevant": true}
+{"id": "rel007", "query": "Data Engineer", "title": "Software Engineer", "description": "We work with large data sets every day and value strong data skills. You will work closely with our data engineer team.", "relevant": false}
+{"id": "rel008", "query": "Data Engineer", "title": "Data Analyst", "description": "We work with large data sets every day and value strong data skills. You will work closely with our data engineer team.", "relevant": false}
+{"id": "rel009", "query": "Data Engineer", "title": "Data Scientist", "description": "We work with large data sets every day and value strong data skills. You will work closely with our data engineer team.", "relevant": false}
+{"id": "rel010", "query": "Data Engineer", "title": "Engineering Manager, Data", "description": "We work with large data sets every day and value strong data skills. You will work closely with our data engineer team.", "relevant": false}
+{"id": "rel011", "query": "Data Engineer", "title": "Sales Engineer", "description": "We work with large data sets every day and value strong data skills. You will work closely with our data engineer team.", "relevant": false}
+{"id": "rel012", "query": "Data Engineer", "title": "Data Entry Clerk", "description": "We work with large data sets every day and value strong data skills. You will work closely with our data engineer team.", "relevant": false}
+{"id": "rel013", "query": "Data Engineer", "title": "Network Engineer", "description": "We work with large data sets every day and value strong data skills. You will work closely with our data engineer team.", "relevant": false}
+{"id": "rel014", "query": "Registered Nurse", "title": "Registered Nurse - ICU", "description": "", "relevant": true}
+{"id": "rel015", "query": "Registered Nurse", "title": "RN Registered Nurse Med Surg", "description": "", "relevant": true}
+{"id": "rel016", "query": "Registered Nurse", "title": "Registered Nurse (Night Shift)", "description": "", "relevant": true}
+{"id": "rel017", "query": "Registered Nurse", "title": "Staff Registered Nurse", "description": "", "relevant": true}
+{"id": "rel018", "query": "Registered Nurse", "title": "Nurse Practitioner", "description": "We work with large data sets every day and value strong data skills. You will work closely with our registered nurse team.", "relevant": false}
+{"id": "rel019", "query": "Registered Nurse", "title": "Nursing Assistant", "description": "We work with large data sets every day and value strong data skills. You will work closely with our registered nurse team.", "relevant": false}
+{"id": "rel020", "query": "Registered Nurse", "title": "Nurse Manager", "description": "We work with large data sets every day and value strong data skills. You will work closely with our registered nurse team.", "relevant": false}
+{"id": "rel021", "query": "Registered Nurse", "title": "Registered Dietitian", "description": "We work with large data sets every day and value strong data skills. You will work closely with our registered nurse team.", "relevant": false}
+{"id": "rel022", "query": "Registered Nurse", "title": "Medical Receptionist", "description": "We work with large data sets every day and value strong data skills. You will work closely with our registered nurse team.", "relevant": false}
+{"id": "rel023", "query": "Accountant", "title": "Staff Accountant", "description": "", "relevant": true}
+{"id": "rel024", "query": "Accountant", "title": "Senior Accountant", "description": "", "relevant": true}
+{"id": "rel025", "query": "Accountant", "title": "Accountant - Accounts Payable", "description": "", "relevant": true}
+{"id": "rel026", "query": "Accountant", "title": "Management Accountant", "description": "", "relevant": true}
+{"id": "rel027", "query": "Accountant", "title": "Accounts Payable Clerk", "description": "We work with large data sets every day and value strong data skills. You will work closely with our accountant team.", "relevant": false}
+{"id": "rel028", "query": "Accountant", "title": "Account Executive", "description": "We work with large data sets every day and value strong data skills. You will work closely with our accountant team.", "relevant": false}
+{"id": "rel029", "query": "Accountant", "title": "Financial Analyst", "description": "We work with large data sets every day and value strong data skills. You will work closely with our accountant team.", "relevant": false}
+{"id": "rel030", "query": "Accountant", "title": "Accounting Manager", "description": "We work with large data sets every day and value strong data skills. You will work closely with our accountant team.", "relevant": false}
+{"id": "rel031", "query": "Frontend Developer", "title": "Frontend Engineer", "description": "", "relevant": true}
+{"id": "rel032", "query": "Frontend Developer", "title": "Front-End Developer (React)", "description": "", "relevant": true}
+{"id": "rel033", "query": "Frontend Developer", "title": "Senior Front End Developer", "description": "", "relevant": true}
+{"id": "rel034", "query": "Frontend Developer", "title": "Frontend Software Engineer", "description": "", "relevant": true}
+{"id": "rel035", "query": "Frontend Developer", "title": "Backend Developer", "description": "We work with large data sets every day and value strong data skills. You will work closely with our frontend developer team.", "relevant": false}
+{"id": "rel036", "query": "Frontend Developer", "title": "Full Stack Developer", "description": "We work with large data sets every day and value strong data skills. You will work closely with our frontend developer team.", "relevant": false}
+{"id": "rel037", "query": "Frontend Developer", "title": "UX Designer", "description": "We work with large data sets every day and value strong data skills. You will work closely with our frontend developer team.", "relevant": false}
+{"id": "rel038", "query": "Frontend Developer", "title": "Frontend Engineering Manager", "description": "We work with large data sets every day and value strong data skills. You will work closely with our frontend developer team.", "relevant": false}
+{"id": "rel039", "query": "Frontend Developer", "title": "Developer Advocate", "description": "We work with large data sets every day and value strong data skills. You will work closely with our frontend developer team.", "relevant": false}
+{"id": "rel040", "query": "Product Designer", "title": "Product Designer", "description": "", "relevant": true}
+{"id": "rel041", "query": "Product Designer", "title": "Senior Product Designer", "description": "", "relevant": true}
+{"id": "rel042", "query": "Product Designer", "title": "Product Designer, Mobile", "description": "", "relevant": true}
+{"id": "rel043", "query": "Product Designer", "title": "Lead Product Designer", "description": "", "relevant": true}
+{"id": "rel044", "query": "Product Designer", "title": "Product Manager", "description": "We work with large data sets every day and value strong data skills. You will work closely with our product designer team.", "relevant": false}
+{"id": "rel045", "query": "Product Designer", "title": "Graphic Designer", "description": "We work with large data sets every day and value strong data skills. You will work closely with our product designer team.", "relevant": false}
+{"id": "rel046", "query": "Product Designer", "title": "Interior Designer", "description": "We work with large data sets every day and value strong data skills. You will work closely with our product designer team.", "relevant": false}
+{"id": "rel047", "query": "Product Designer", "title": "Product Marketing Manager", "description": "We work with large data sets every day and value strong data skills. You will work closely with our product designer team.", "relevant": false}
+{"id": "rel048", "query": "Logistics Coordinator", "title": "Logistics Coordinator", "description": "", "relevant": true}
+{"id": "rel049", "query": "Logistics Coordinator", "title": "Senior Logistics Coordinator", "description": "", "relevant": true}
+{"id": "rel050", "query": "Logistics Coordinator", "title": "Logistics Coordinator - Freight", "description": "", "relevant": true}
+{"id": "rel051", "query": "Logistics Coordinator", "title": "Logistics Manager", "description": "We work with large data sets every day and value strong data skills. You will work closely with our logistics coordinator team.", "relevant": false}
+{"id": "rel052", "query": "Logistics Coordinator", "title": "Warehouse Associate", "description": "We work with large data sets every day and value strong data skills. You will work closely with our logistics coordinator team.", "relevant": false}
+{"id": "rel053", "query": "Logistics Coordinator", "title": "Marketing Coordinator", "description": "We work with large data sets every day and value strong data skills. You will work closely with our logistics coordinator team.", "relevant": false}
+{"id": "rel054", "query": "Logistics Coordinator", "title": "Truck Driver", "description": "We work with large data sets every day and value strong data skills. You will work closely with our logistics coordinator team.", "relevant": false}
+{"id": "rel055", "query": "Math Teacher", "title": "Mathematics Teacher", "description": "", "relevant": true}
+{"id": "rel056", "query": "Math Teacher", "title": "Secondary Maths Teacher", "description": "", "relevant": true}
+{"id": "rel057", "query": "Math Teacher", "title": "High School Math Teacher", "description": "", "relevant": true}
+{"id": "rel058", "query": "Math Teacher", "title": "Science Teacher", "description": "We work with large data sets every day and value strong data skills. You will work closely with our math teacher team.", "relevant": false}
+{"id": "rel059", "query": "Math Teacher", "title": "Math Tutor", "description": "We work with large data sets every day and value strong data skills. You will work closely with our math teacher team.", "relevant": false}
+{"id": "rel060", "query": "Math Teacher", "title": "Teaching Assistant", "description": "We work with large data sets every day and value strong data skills. You will work closely with our math teacher team.", "relevant": false}
+{"id": "rel061", "query": "Math Teacher", "title": "Mathematics Lecturer", "description": "We work with large data sets every day and value strong data skills. You will work closely with our math teacher team.", "relevant": false}
+{"id": "rel062", "query": "Paralegal", "title": "Corporate Paralegal", "description": "", "relevant": true}
+{"id": "rel063", "query": "Paralegal", "title": "Litigation Paralegal", "description": "", "relevant": true}
+{"id": "rel064", "query": "Paralegal", "title": "Senior Paralegal", "description": "", "relevant": true}
+{"id": "rel065", "query": "Paralegal", "title": "Legal Assistant", "description": "We work with large data sets every day and value strong data skills. You will work closely with our paralegal team.", "relevant": false}
+{"id": "rel066", "query": "Paralegal", "title": "Attorney", "description": "We work with large data sets every day and value strong data skills. You will work closely with our paralegal team.", "relevant": false}
+{"id": "rel067", "query": "Paralegal", "title": "Legal Secretary", "description": "We work with large data sets every day and value strong data skills. You will work closely with our paralegal team.", "relevant": false}
+{"id": "rel068", "query": "Machine Learning Engineer", "title": "Machine Learning Engineer", "description": "", "relevant": true}
+{"id": "rel069", "query": "Machine Learning Engineer", "title": "ML Engineer", "description": "", "relevant": true}
+{"id": "rel070", "query": "Machine Learning Engineer", "title": "Senior Machine Learning Engineer, NLP", "description": "", "relevant": true}
+{"id": "rel071", "query": "Machine Learning Engineer", "title": "Applied Machine Learning Engineer", "description": "", "relevant": true}
+{"id": "rel072", "query": "Machine Learning Engineer", "title": "Machine Learning Scientist", "description": "We work with large data sets every day and value strong data skills. You will work closely with our machine learning engineer team.", "relevant": false}
+{"id": "rel073", "query": "Machine Learning Engineer", "title": "Data Engineer", "description": "We work with large data sets every day and value strong data skills. You will work closely with our machine learning engineer team.", "relevant": false}
+{"id": "rel074", "query": "Machine Learning Engineer", "title": "Machine Operator", "description": "We work with large data sets every day and value strong data skills. You will work closely with our machine learning engineer team.", "relevant": false}
+{"id": "rel075", "query": "Account Executive", "title": "Account Executive", "description": "", "relevant": true}
+{"id": "rel076", "query": "Account Executive", "title": "Enterprise Account Executive", "description": "", "relevant": true}
+{"id": "rel077", "query": "Account Executive", "title": "Senior Account Executive - SaaS", "description": "", "relevant": true}
+{"id": "rel078", "query": "Account Executive", "title": "Account Manager", "description": "We work with large data sets every day and value strong data skills. You will work closely with our account executive team.", "relevant": false}
+{"id": "rel079", "query": "Account Executive", "title": "Executive Assistant", "description": "We work with large data sets every day and value strong data skills. You will work closely with our account executive team.", "relevant": false}
+{"id": "rel080", "query": "Account Executive", "title": "Accountant", "description": "We work with large data sets every day and value strong data skills. You will work closely with our account executive team.", "relevant": false}
+{"id": "rel081", "query": "Data Engineer", "alt_titles": ["Analytics Engineer"], "title": "Analytics Engineer", "description": "", "relevant": true, "note": "planner alt title"}
+{"id": "rel082", "query": "Data Engineer", "alt_titles": ["Analytics Engineer"], "title": "Analytics Manager", "description": "We work with large data sets every day and value strong data skills. ", "relevant": false}

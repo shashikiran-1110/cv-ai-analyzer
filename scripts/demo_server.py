@@ -306,6 +306,20 @@ async def fc(request: Request):
                             "exclude_titles": ["Sales Engineer"], "seniority": [], "location": "London" if "london" in intent.lower() else "",
                             "workplace": ["hybrid"] if "hybrid" in intent.lower() else [], "keywords": ["Python", "SQL", "Spark"],
                             "note": "Demo plan: one unrelated title (Florist) is included to show it gets dropped."})
+    if fmt == "Strategy":
+        jobs = json.loads(re.search(r"<jobs>(.*?)</jobs>", user, re.S).group(1))
+        ok = [j for j in jobs if j["qualifies"]] or jobs[:3]
+        gated = [j for j in jobs if j["gates_failed"]]
+        return _json_reply({
+            "shortlist": [{"job_id": j["job_id"], "priority": 1 if i == 0 else 2, "why": f"{j['title']} scores {j['score']}% and you meet most must-haves.",
+                           "tailor_points": ["Lead with your Python/SQL pipeline work", "Name Airflow in the summary"], "risk": "Kafka is listed as a must-have."}
+                          for i, j in enumerate(ok[:4])]
+                         + [{"job_id": j["job_id"], "priority": 1, "why": "(demo: a blocked job the server demotes)", "tailor_points": [],
+                             "risk": "Strong fit."} for j in gated[:1]]
+                         + [{"job_id": "demo-invented-id", "priority": 1, "why": "(demo: invented id, dropped)", "tailor_points": [], "risk": ""}],
+            "skip": [{"job_id": j["job_id"], "reason": "Different specialism; most requirements are missing."} for j in jobs[-2:]],
+            "themes": ["Python and SQL pipelines everywhere", "Streaming (Kafka) is the common gap"],
+            "next_steps": ["Apply to the priority-1 job today", "Tailor two bullets for each priority-2 job", "Start a small Kafka project"]})
     if fmt == "Questions":
         ids = re.findall(r"^- (r\d+) · (\w+) · (.+)$", user, re.M)
         qs = [{"id": f"x{i}", "question": f"Tell me about a time you used: {t[:80]}", "requirement_id": rid,
@@ -327,7 +341,15 @@ async def fc(request: Request):
         return {"choices": [{"message": {"content": json.dumps(_extract_answer(user))}}]}
     out = {"summary": "AI: strong data-engineering profile; main gap is container orchestration.",
            "strengths": ["AI strength: solid Python/SQL/AWS match"], "improvements": ["AI: quantify pipeline impact"],
-           "skills_to_learn": [{"skill": "Kubernetes", "why": "Asked in most postings.", "how": "Deploy a small app on kind."}]}
+           "skills_to_learn": [{"skill": "Kubernetes", "why": "Asked in most postings.", "how": "Deploy a small app on kind."}],
+           "market_fit": "AI: you are competitive for batch data-engineering roles; streaming-heavy roles are a stretch.",
+           "strongest_areas": ["Batch data pipelines", "SQL modelling"],
+           "career_paths": [{"title": "Analytics Engineer", "why": "Your SQL and modelling work", "gap": "dbt depth"},
+                            {"title": "Platform Data Engineer", "why": "AWS and Airflow", "gap": "Kubernetes"}],
+           "gap_plan": [{"week": 1, "focus": "Kubernetes basics", "outcome": "Deploy one service on kind"},
+                        {"week": 2, "focus": "Kafka fundamentals", "outcome": "Stream events into a table"},
+                        {"week": 3, "focus": "Portfolio project", "outcome": "Pipeline repo with README"},
+                        {"week": 4, "focus": "Resume and applications", "outcome": "Five tailored applications"}]}
     return {"choices": [{"message": {"content": json.dumps(out)}}]}
 
 

@@ -38,6 +38,7 @@ HEADLINE = {
     "gates.f1": ("+", 0.01), "agents.fabrications_missed": ("-", 0.0), "agents.guard_f1": ("+", 0.01), "skills.f1_nontech": ("+", 0.02),
     "requirements.f1": ("+", 0.01), "requirements.holdout_f1": ("+", 0.01), "fairness.identical_rate": ("+", 0.0),
     "evidence.accuracy": ("+", 0.0), "evidence.false_accepts": ("-", 0.0),
+    "relevance.precision": ("+", 0.0), "relevance.recall": ("+", 0.02),
 }
 
 
@@ -222,6 +223,21 @@ def suite_evidence() -> dict:
     return {"metrics": {"accuracy": M.accuracy(ok), "false_accepts": fa, "false_rejects": fr, "cases": len(ok)}, "failures": fails}
 
 
+def suite_relevance() -> dict:
+    """Job-title relevance (app/sources/aggregate): is a fetched posting the job that was searched for?"""
+    tp = fp = fn = 0
+    fails = []
+    for c in _load("relevance.jsonl"):
+        q = JobQuery(title=c["query"], alt_titles=c.get("alt_titles", []))
+        j = Job(id="x", title=c["title"], description=c.get("description", ""))
+        rel = aggregate.query_relevance(j, q) if q.alt_titles else aggregate.relevance(j, aggregate.core_tokens(q.title))
+        pred = rel >= 0.75
+        tp, fp, fn = tp + (pred and c["relevant"]), fp + (pred and not c["relevant"]), fn + (not pred and c["relevant"])
+        if pred != c["relevant"]:
+            fails.append({"query": c["query"], "title": c["title"], "expected": c["relevant"], "relevance": round(rel, 2)})
+    return {"metrics": {**M.prf(tp, fp, fn), "cases": len(_load("relevance.jsonl"))}, "failures": fails}
+
+
 def suite_match() -> dict:
     """Score vs human label on labelled resume–job pairs (eval/datasets/match/pairs.jsonl). See its README."""
     pairs = [p for p in _load("match/pairs.jsonl") if p.get("label") and p.get("reviewed")]
@@ -244,7 +260,7 @@ def suite_match() -> dict:
 
 SUITES = {"skills": suite_skills, "experience": suite_experience, "education": suite_education,
           "location": suite_location, "requirements": suite_requirements, "gates": suite_gates, "agents": suite_agents,
-          "fairness": suite_fairness, "evidence": suite_evidence,
+          "fairness": suite_fairness, "evidence": suite_evidence, "relevance": suite_relevance,
           "match": suite_match}
 
 

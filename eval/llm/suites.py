@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Awaitable, Callable
 
 from app import deepmatch, insights, llm, matcher, resume
-from app.agents import coach, interview, planner, tailoring
+from app.agents import coach, interview, planner, strategy, tailoring
 from app.ai import gateway, guard
 from app.sources.sample import sample_jobs
 from app.understanding import requirements as req_extract
@@ -439,6 +439,52 @@ def _insight_cases() -> list[dict]:
            [{"id": f"ins-{c['id']}", "resume": c["resume"]} for c in _load("llm/deep_verify.jsonl")[:2]]
 
 
+# ---------- apply strategy ----------
+async def strategy_case(ctx: Ctx, c: dict) -> dict:
+    a = _mini_analysis(c["resume"], c["jobs"], threshold=c.get("threshold", 50))
+    t = a["summary"]["threshold"]
+    raw = await gateway.structured(ctx.cfg, gateway.Call(agent="apply_strategy"), strategy.SYSTEM,
+                                   strategy.PROMPT.format(threshold=t, jobs=json.dumps(strategy.job_facts(a["jobs"], t), indent=1)),
+                                   strategy.Strategy, cacheable=f"<resume>\n{c['resume'][:12000]}\n</resume>")
+    facts = strategy.job_facts(a["jobs"], t)
+    out = strategy.check(raw, facts, c["resume"])
+    ids = {f["job_id"] for f in facts}
+    qualifying = {f["job_id"] for f in facts if f["qualifies"]}
+    raw_invalid = sum(p.job_id not in ids for p in raw.shortlist)
+    raw_gated_p1 = sum(1 for p in raw.shortlist if p.job_id in ids and p.priority == 1
+                       and next(f for f in facts if f["job_id"] == p.job_id)["gates_failed"]
+                       and not any(g.lower() in p.risk.lower() for g in next(f for f in facts if f["job_id"] == p.job_id)["gates_failed"]))
+    shown_invalid = sum(p["job_id"] not in ids for p in out["shortlist"])
+    shown_gated_p1 = sum(1 for p in out["shortlist"] if p["priority"] == 1 and p["gates_failed"]
+                         and not any(g.lower() in p["risk"].lower() for g in p["gates_failed"]))
+    sl = [p["job_id"] for p in out["shortlist"]]
+    return {"passed": shown_invalid == 0 and shown_gated_p1 == 0, "raw_invalid": raw_invalid, "raw_gated_p1": raw_gated_p1,
+            "shown_invalid": shown_invalid, "shown_gated_p1": shown_gated_p1,
+            "shortlist_precision": (sum(i in qualifying for i in sl) / len(sl)) if sl else None,
+            "unverified": len(out["unverified_numbers"]), "why": {"dropped_ids": out["dropped_ids"], "unverified_numbers": out["unverified_numbers"]}}
+
+
+def strategy_aggregate(results: list[dict], ctx: Ctx) -> dict:
+    ok = [r for r in results if "raw_invalid" in r]
+    prec = [r["shortlist_precision"] for r in ok if r["shortlist_precision"] is not None]
+    return {"cases": len(results), "raw_invalid_job_ids": sum(r["raw_invalid"] for r in ok),
+            "raw_gated_priority1": sum(r["raw_gated_p1"] for r in ok),
+            "invalid_jobs_shown": sum(r["shown_invalid"] for r in ok),
+            "gated_priority1_without_risk": sum(r["shown_gated_p1"] for r in ok),
+            "shortlist_precision": round(statistics.mean(prec), 4) if prec else None,
+            "outputs_with_unverified_numbers": _rate(sum(r["unverified"] > 0 for r in ok), len(ok))}
+
+
+def _strategy_cases() -> list[dict]:
+    from tests.conftest import RESUME_LINES
+    sample = _sample()
+    seeds = _load("llm/deep_verify.jsonl")
+    out = [{"id": "strat-fixture", "resume": "\n".join(RESUME_LINES), "jobs": sample}]
+    for c in seeds[:3]:      # each seed resume against its own posting + the sample set (mixed fits)
+        out.append({"id": f"strat-{c['id']}", "resume": c["resume"], "jobs": [_job(c)] + sample[:8]})
+    return out
+
+
 SUITES: dict[str, Suite] = {s.name: s for s in [
     Suite("llm_deep_verify", "Deep verifier: per-requirement status vs gold; quote hallucination; what the server lets through.",
           lambda: _load("llm/deep_verify.jsonl"), deep_case, deep_aggregate, {"deep_verifier": deepmatch.PROMPT_VERSION}),
@@ -460,15 +506,18 @@ SUITES: dict[str, Suite] = {s.name: s for s in [
           _insight_cases, insights_case, insights_aggregate, {"insight_narrator": insights.PROMPT_VERSION}, uses_judge=True),
     Suite("llm_tailoring", "Tailoring agent: guard blocks fabrications; nothing unverifiable survives in accepted edits.",
           _tailoring_cases, tailoring_case, tailoring_aggregate, {"tailoring": tailoring.PROMPT_VERSION}, concurrency=2),
+    Suite("llm_strategy", "Apply strategy: invented job ids and unflagged blocked jobs never reach the user; shortlist precision.",
+          _strategy_cases, strategy_case, strategy_aggregate, {"apply_strategy": strategy.PROMPT_VERSION}),
     Suite("llm_judge", "Judge sanity: picks the better output (by construction) in both orders.",
           lambda: _load("llm/judge_pairs.jsonl"), judge_case, judge_aggregate, {"eval_judge": J.PROMPT_VERSION}, uses_judge=True),
 ]}
 
 # Must be 0 in every mode (mock proves it with an adversarial model; real runs confirm it).
 DEFENSE_METRICS = {"llm_deep_verify": ["unsupported_quote_accepted"], "llm_safety": ["attack_success_defended"],
-                   "llm_tailoring": ["unverifiable_in_accepted"], "llm_interview": ["new_numbers_unflagged"]}
+                   "llm_tailoring": ["unverifiable_in_accepted"], "llm_interview": ["new_numbers_unflagged"],
+                   "llm_strategy": ["invalid_jobs_shown", "gated_priority1_without_risk"]}
 # Quality headline per suite (shown in Eval Studio's leaderboard; real-model modes only).
 QUALITY_METRIC = {"llm_deep_verify": "final_accuracy", "llm_extractor": "f1", "llm_safety": "raw_compliance_rate",
                   "llm_planner": "title_ok_rate", "llm_interview": "grade_spearman", "llm_coach": "answers_with_unverified_numbers",
-                  "llm_insights": "outputs_with_unsupported_numbers", "llm_tailoring": "guard_block_rate", "llm_judge": "pairwise_accuracy",
+                  "llm_insights": "outputs_with_unsupported_numbers", "llm_tailoring": "guard_block_rate", "llm_judge": "pairwise_accuracy", "llm_strategy": "shortlist_precision",
                   "llm_consistency": "final_agreement"}

@@ -100,6 +100,10 @@ eval_runs = Table("eval_runs", meta, Column("id", String(32), primary_key=True),
                   Column("metrics", Text), Column("cost_usd", Float), Column("latency_p50_ms", Integer),
                   Column("latency_p95_ms", Integer), Column("cases", Integer), Column("failed", Integer),
                   Column("git_sha", String(40)), Column("created_at", Float, index=True))
+saved_links = Table("saved_links", meta, Column("id", Integer, primary_key=True, autoincrement=True),
+                    Column("owner", String(64), index=True), Column("url", String(2000), nullable=False),
+                    Column("status", String(10), default="new"), Column("title", String(300)), Column("company", String(300)),
+                    Column("message", Text), Column("added_at", Float), Column("last_fetched", Float))
 eval_cases = Table("eval_cases", meta, Column("run_id", String(32), primary_key=True), Column("case_id", String(200), primary_key=True),
                    Column("passed", Integer), Column("detail", Text))
 
@@ -276,6 +280,44 @@ def delete_analysis(aid: str, owner: str) -> bool:
         return c.execute(delete(analyses).where(analyses.c.id == aid, analyses.c.owner == owner)).rowcount > 0
 
 
+# ---------- saved job links ----------
+def list_links(owner: str) -> list[dict]:
+    with engine().connect() as c:
+        return [dict(r) for r in c.execute(select(saved_links).where(saved_links.c.owner == owner)
+                                           .order_by(saved_links.c.added_at.desc(), saved_links.c.id.desc())).mappings()]
+
+
+def add_links(owner: str, urls: list[str], limit: int = 200) -> list[dict]:
+    """Add new links (duplicates ignored); keeps at most `limit` per owner."""
+    now = time.time()
+    with engine().begin() as c:
+        have = {r.url for r in c.execute(select(saved_links.c.url).where(saved_links.c.owner == owner))}
+        room = max(0, limit - len(have))
+        for u in [u for u in dict.fromkeys(urls) if u not in have][:room]:
+            c.execute(insert(saved_links).values(owner=owner, url=u, status="new", added_at=now))
+    return list_links(owner)
+
+
+def delete_links(owner: str, link_id: Optional[int] = None, only: str = "") -> int:
+    q = delete(saved_links).where(saved_links.c.owner == owner)
+    if link_id is not None:
+        q = q.where(saved_links.c.id == link_id)
+    elif only:
+        q = q.where(saved_links.c.status == only)
+    with engine().begin() as c:
+        return c.execute(q).rowcount
+
+
+def update_links_from_results(owner: str, results: dict[str, dict]) -> None:
+    """After a search: mark each saved link fetched (✓ title, company) or failed (✕ reason)."""
+    now = time.time()
+    with engine().begin() as c:
+        for url, r in results.items():
+            c.execute(update(saved_links).where(saved_links.c.owner == owner, saved_links.c.url == url).values(
+                status="ok" if r.get("ok") else "failed", title=(r.get("title") or "")[:300], company=(r.get("company") or "")[:300],
+                message=(r.get("message") or "")[:500], last_fetched=now))
+
+
 def save_feedback(**row) -> int:
     for k in ("correction", "output"):
         if k in row and not isinstance(row[k], (str, type(None))):
@@ -418,6 +460,7 @@ def export_owner(owner: str) -> dict:
         apps = [dict(x) for x in c.execute(select(applications).where(applications.c.owner == owner)).mappings()]
         ws = [dict(x) for x in c.execute(select(watches).where(watches.c.owner == owner)).mappings()]
         fb = [dict(x) for x in c.execute(select(feedback).where(feedback.c.owner == owner)).mappings()]
+        links = [dict(x) for x in c.execute(select(saved_links).where(saved_links.c.owner == owner)).mappings()]
     for x in fb:
         x["correction"], x["output"] = loads(x["correction"]), loads(x["output"])
     for r in res:
@@ -428,7 +471,8 @@ def export_owner(owner: str) -> dict:
         x["data"] = loads(x["data"], {})
     for x in ws:
         x["query"] = loads(x["query"], {})
-    return {"resumes": res, "analyses": an, "searches": se, "applications": apps, "watches": ws, "feedback": fb}
+    return {"resumes": res, "analyses": an, "searches": se, "applications": apps, "watches": ws, "feedback": fb,
+            "saved_links": links}
 
 
 def delete_owner(owner: str) -> dict:
@@ -445,6 +489,7 @@ def delete_owner(owner: str) -> dict:
         c.execute(delete(ext_tokens).where(ext_tokens.c.owner == owner))
         c.execute(delete(llm_calls).where(llm_calls.c.owner == owner))
         c.execute(delete(feedback).where(feedback.c.owner == owner))
+        c.execute(delete(saved_links).where(saved_links.c.owner == owner))
         if owner.startswith("u:"):
             uid = owner[2:]
             c.execute(delete(sessions).where(sessions.c.user_id == uid))
@@ -459,7 +504,7 @@ def reassign_owner(old: str, new: str) -> None:
     with engine().begin() as c:
         for t in (resumes, analyses):
             c.execute(update(t).where(t.c.owner == old).values(owner=new, expires_at=expiry(new)))
-        for t in (searches, applications, watches, ext_tokens, llm_calls, feedback):
+        for t in (searches, applications, watches, ext_tokens, llm_calls, feedback, saved_links):
             c.execute(update(t).where(t.c.owner == old).values(owner=new))
 
 

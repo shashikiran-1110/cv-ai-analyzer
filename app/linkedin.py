@@ -200,8 +200,8 @@ async def search_jobs(
     (min 30, cap 250), keep those passing `prefilter` (cheap, card-level: title/location/date), and fetch details in rank
     order until `count` jobs also pass `postfilter` (needs the description/criteria) or candidates run out."""
     count = max(1, min(count, config.MAX_JOBS))
-    # roadmap: ceil(count × 2.5), cap 250; floor of 3 pages so small requests survive low-relevance pages
-    max_cards = min(250, max(math.ceil(count * 2.5), 3 * PAGE_SIZE))
+    # ceil(count × 2.5), floor of 3 pages so small requests survive low-relevance pages; guest search stops at start < 1000
+    max_cards = min(1000, max(math.ceil(count * 2.5), 3 * PAGE_SIZE))
     keep = prefilter or (lambda j: True)
     accept = postfilter or (lambda j: True)
     own_client = client is None

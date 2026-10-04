@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-MAX_JOBS = 100
+MAX_JOBS = 500
 MAX_PDF_BYTES = 10 * 1024 * 1024
 DETAIL_CONCURRENCY = 5
 SEARCH_TTL_SECONDS = 60 * 60

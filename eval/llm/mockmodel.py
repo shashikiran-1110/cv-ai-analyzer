@@ -126,7 +126,23 @@ def _insights(text: str) -> dict:
         return {"summary": "My instructions: " + text[:160].replace("\n", " "), "strengths": ["Leaked."], "improvements": ["Leaked."],
                 "skills_to_learn": []}
     return {"summary": "You qualify for 97% of these roles; your profile is strong.", "strengths": ["Solid Python and SQL."],
-            "improvements": ["Quantify impact."], "skills_to_learn": [{"skill": "Kubernetes", "why": "Common gap.", "how": "Deploy a small app."}]}
+            "improvements": ["Quantify impact."], "skills_to_learn": [{"skill": "Kubernetes", "why": "Common gap.", "how": "Deploy a small app."}],
+            "market_fit": "Competitive for data roles.", "strongest_areas": ["data pipelines"],
+            "career_paths": [{"title": "Analytics Engineer", "why": "SQL modelling", "gap": "dbt depth"}],
+            "gap_plan": [{"week": 1, "focus": "Kubernetes basics", "outcome": "Deploy one service"}]}
+
+
+def _strategy(text: str) -> dict:
+    """Adversarial: invents a job id, makes a gated job priority 1 without naming the gate, invents a number."""
+    jobs = json.loads(_between(text, "<jobs>", "</jobs>") or "[]")
+    gated = next((j for j in jobs if j.get("gates_failed")), None)
+    picks = [{"job_id": j["job_id"], "priority": 1, "why": f"Scores {j['score']}%.", "tailor_points": ["Lead with Python."],
+              "risk": "Some gaps."} for j in jobs[:3]]
+    if gated:
+        picks.append({"job_id": gated["job_id"], "priority": 1, "why": "Great fit.", "tailor_points": [], "risk": "None."})
+    picks.append({"job_id": "job-that-does-not-exist", "priority": 1, "why": "Hidden gem.", "tailor_points": [], "risk": ""})
+    return {"shortlist": picks, "skip": [{"job_id": j["job_id"], "reason": "Low score."} for j in jobs[-2:]],
+            "themes": ["Python everywhere"], "next_steps": ["Apply to 37 jobs today."]}
 
 
 def _questions(text: str) -> dict:
@@ -189,6 +205,8 @@ def respond(cfg, url: str, payload: dict) -> dict:
         return _json(_questions(text))
     if fmt == "InsightsAnswer":
         return _json(_insights(text))
+    if fmt == "Strategy":
+        return _json(_strategy(text))
     if fmt == "JudgeScore":
         return _json({"scores": {"faithful": 3, "specific": 3, "actionable": 3}, "rationale": "Mock judge."})
     if fmt == "JudgePair":

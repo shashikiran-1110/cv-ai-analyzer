@@ -26,16 +26,17 @@ from . import assistant, config, deepmatch, insights, linkedin, llm, matcher, re
 from .ai import gateway
 from . import sources as src
 from .sources import aggregate
+from .sources import enrich as enrich_src
 from .sources.sample import sample_jobs
 from .jobmodel import Job
 from .runtime import ratelimit
 from .runtime.events import bus
 from .storage import db
 from .understanding import requirements as req_extract, resume_parse
-from .agents import coach, interview, planner, tailoring
+from .agents import coach, interview, planner, strategy, tailoring
 from .ai import guard
 from . import docx_export
-from .api import accounts, companies, evals, ext, market, ops, tracker, watches
+from .api import accounts, companies, evals, ext, links, market, ops, tracker, watches
 from .runtime import logs as runtime_logs, metrics, scheduler
 
 runtime_logs.setup()
@@ -46,6 +47,7 @@ DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 SEARCHES: dict[str, dict] = {}
 ANALYSES: dict[str, dict] = {}
 _TASKS: set[asyncio.Task] = set()
+DEEP_LIMIT = 100          # deep AI checks per analysis
 TIME_RANGES = {"24h": 24, "week": 24 * 7, "month": 24 * 30, "any": None}
 
 
@@ -63,7 +65,7 @@ class SearchRequest(BaseModel):
     sources: list[str] = Field(default=["linkedin"], min_length=1, max_length=20)
     companies: dict[Literal["greenhouse", "lever", "ashby", "smartrecruiters", "workable", "recruitee", "personio",
                             "teamtailor", "workday"], list[str]] = {}
-    urls: list[str] = Field(default=[], max_length=25)
+    urls: list[str] = Field(default=[], max_length=100)
     adzuna: Optional[dict[str, str]] = None
     usajobs: Optional[dict[str, str]] = None
     strict: bool = True
@@ -334,6 +336,22 @@ async def _run_search(sid: str, req: SearchRequest, hours: Optional[int]) -> Non
         jobs, stats, warnings = await aggregate.run(q, chosen, on_update)
         await on_update(stats)
         state["warnings"] = warnings
+        state["funnel"] = q.funnel
+        if jobs:                                   # fill thin postings from their own pages (descriptions, salary)
+            state["stage"] = "enriching"
+
+            async def on_enrich(done: int, total: int) -> None:
+                state["enrich"] = {"done": done, "total": total}
+                await bus.publish(sid, "source.progress", {"sources": state["sources"], "linkedin": None, "done": state["done"],
+                                                           "total": state["total"], "stage": "enriching", "enrich": state["enrich"]})
+            try:
+                async with httpx.AsyncClient(timeout=httpx.Timeout(10, connect=5)) as ec:
+                    q.funnel["enriched"] = await asyncio.wait_for(enrich_src.enrich(jobs, ec, on_enrich), 120)
+            except asyncio.TimeoutError:
+                warnings.append("Some postings took too long to load extra details; their scores use the text we had.")
+        if q.url_results:
+            await run_in_threadpool(db.update_links_from_results, state.get("owner", ""), q.url_results)
+        await run_in_threadpool(db.kv_set, f"funnel:{sid}", q.funnel, db.retention_seconds())
         if not jobs:
             errs = [st["message"] for st in stats.values() if st["status"] == "error" and st["message"]]
             if errs and all(st["status"] == "error" for st in stats.values()):
@@ -430,7 +448,8 @@ async def get_search(sid: str):
     s = _search(sid)
     if not s:
         raise HTTPException(404, "Search expired or not found. Please search again.")
-    out = {k: s.get(k) for k in ("status", "stage", "done", "total", "error", "query", "warnings", "sources", "linkedin")}
+    out = {k: s.get(k) for k in ("status", "stage", "done", "total", "error", "query", "warnings", "sources", "linkedin", "enrich")}
+    out["funnel"] = s.get("funnel") or await run_in_threadpool(db.kv_get, f"funnel:{sid}") or {}
     out["cached"] = bool(s.get("cached_from"))
     if s["status"] == "done":
         out["jobs"] = [{k: v for k, v in j.items() if k != "description"} | {"description_chars": len(j["description"])}
@@ -569,6 +588,7 @@ async def analyze(
     use_ai: bool = Form(False),
     job_ids: Optional[str] = Form(None),
     extra_skills: Optional[str] = Form(None),
+    auto_deep: int = Form(0),
 ):
     s = _search(search_id)
     if not s or s["status"] != "done":
@@ -610,6 +630,11 @@ async def analyze(
         run_id = f"ins{aid}"
         ins["pending"] = True
     a["result"] = {"query": s["query"], **computed, "insights": ins, "insights_run_id": run_id}
+    if cfg is not None:
+        a["auto_deep"] = max(0, min(AUTO_DEEP_MAX, auto_deep))
+        a["result"]["strategy"] = {"pending": True}
+        if a["auto_deep"]:
+            a["result"]["auto_deep"] = {"status": "queued", "done": 0, "total": a["auto_deep"]}
     _gc(ANALYSES, config.MAX_STORED_SEARCHES)
     ANALYSES[aid] = a
     await run_in_threadpool(_persist_analysis, aid, a)
@@ -655,9 +680,23 @@ async def _insights_run(run_id: str, aid: str, cfg: llm.LLMConfig) -> None:
                                             gateway.Call(agent="insight_narrator", owner=a.get("owner", ""),
                                                          analysis_id=aid, run_id=run_id))
         res["insights"] = ins
-        res["insights_run_id"] = None
         await run_in_threadpool(_persist_analysis, aid, a)
         await bus.publish(run_id, "insight.ready", {"insights": ins})
+        try:                                   # apply strategy (its failure never hides the advice)
+            res["strategy"] = await strategy.build(cfg, a["resume_text"], res["jobs"], res["summary"]["threshold"],
+                                                   gateway.Call(agent="apply_strategy", owner=a.get("owner", ""),
+                                                                analysis_id=aid, run_id=run_id))
+        except llm.LLMError as e:
+            res["strategy"] = {"error": f"Apply strategy unavailable: {e}"}
+        except Exception as e:
+            log.exception("strategy failed")
+            res["strategy"] = {"error": f"Apply strategy failed ({type(e).__name__})."}
+        await run_in_threadpool(_persist_analysis, aid, a)
+        await bus.publish(run_id, "strategy.ready", {"strategy": res["strategy"]})
+        if a.get("auto_deep"):
+            await _auto_deep(run_id, aid, cfg, a["auto_deep"])
+        res["insights_run_id"] = None
+        await run_in_threadpool(_persist_analysis, aid, a)
         await bus.finish(run_id, "done")
     except Exception as e:
         log.exception("insights run failed")
@@ -693,7 +732,7 @@ async def delete_analysis(aid: str, request: Request):
 
 
 FEEDBACK_KINDS = Literal["requirement", "deep_requirement", "insights", "coach", "assistant", "tool", "tailoring_edit",
-                         "interview_feedback", "planner", "extractor", "job_score"]
+                         "interview_feedback", "planner", "extractor", "job_score", "strategy"]
 
 
 class FeedbackIn(BaseModel):
@@ -981,24 +1020,100 @@ async def deep_check(aid: str, job_id: str, request: Request):
     ratelimit.check(request, "ai")
     job = _job(a, job_id)
     a.setdefault("deep", {})
-    if len(a["deep"]) >= 60 and job_id not in a["deep"]:
-        raise HTTPException(429, "Deep AI check limit reached for this analysis (60 jobs).")
-    scored = next((r for r in a["result"]["jobs"] if r["id"] == job_id), None)
-    if scored is None:
+    if len(a["deep"]) >= DEEP_LIMIT and job_id not in a["deep"]:
+        raise HTTPException(429, f"Deep AI check limit reached for this analysis ({DEEP_LIMIT} jobs).")
+    if not any(r["id"] == job_id for r in a["result"]["jobs"]):
         raise HTTPException(404, "Job not found in this analysis.")
-    if not req_extract.is_current(job):
-        await _extract_requirements(cfg, job, owner(request), aid)
-        computed = await run_in_threadpool(_compute, a, a["extra"], a["result"]["summary"]["threshold"])
-        a["result"].update(computed)
-        scored = next(r for r in computed["jobs"] if r["id"] == job_id)
-    base = {**scored, "score": scored.get("score_det", scored["score"])}
-    a["deep"][job_id] = await deepmatch.assess(cfg, job, base, a["resume_text"],
-                                               gateway.Call(agent="deep_verifier", owner=owner(request), analysis_id=aid))
+    await _deep_one(a, aid, job, cfg, owner(request))
     computed = await run_in_threadpool(_compute, a, a["extra"], a["result"]["summary"]["threshold"])
     a["result"].update(computed)
     await run_in_threadpool(_persist_analysis, aid, a)
     out = next(r["deep"] for r in computed["jobs"] if r["id"] == job_id)
     return {"deep": out, "summary": computed["summary"], "jobs": computed["jobs"]}
+
+
+async def _deep_one(a: dict, aid: str, job: dict, cfg: llm.LLMConfig, who: str, run_id: str = "") -> None:
+    """Verify one job with the AI (requirement list refreshed first if stale). Caller recomputes scores."""
+    a.setdefault("deep", {})
+    job_id = job["id"]
+    scored = next(r for r in a["result"]["jobs"] if r["id"] == job_id)
+    if not req_extract.is_current(job):
+        await _extract_requirements(cfg, job, who, aid)
+        computed = await run_in_threadpool(_compute, a, a["extra"], a["result"]["summary"]["threshold"])
+        a["result"].update(computed)
+        scored = next(r for r in computed["jobs"] if r["id"] == job_id)
+    base = {**scored, "score": scored.get("score_det", scored["score"])}
+    a["deep"][job_id] = await deepmatch.assess(cfg, job, base, a["resume_text"],
+                                               gateway.Call(agent="deep_verifier", owner=who, analysis_id=aid, run_id=run_id))
+
+
+AUTO_DEEP_MAX = 25
+
+
+def _auto_deep_targets(a: dict, n: int) -> list[str]:
+    """Top-N by score, qualifying jobs first, skipping ones already verified."""
+    t = a["result"]["summary"]["threshold"]
+    jobs = [r for r in a["result"]["jobs"] if r["id"] not in a.get("deep", {})]
+    jobs.sort(key=lambda r: (not (r["score"] >= t and not r.get("gates_failed")), -r["score"]))
+    return [r["id"] for r in jobs[:n]]
+
+
+async def _auto_deep(run_id: str, aid: str, cfg: llm.LLMConfig, n: int) -> None:
+    a = ANALYSES.get(aid)
+    if not a:
+        return
+    ids = _auto_deep_targets(a, min(n, AUTO_DEEP_MAX, DEEP_LIMIT - len(a.get("deep", {}))))
+    res = a["result"]
+    if not ids:
+        res["auto_deep"] = {"status": "done", "done": 0, "total": 0}
+        return
+    full = {j["id"]: j for j in a["jobs_full"]}
+    chars = sum(min(len(full[i].get("description") or ""), 7000) + 1500 for i in ids) // len(ids)
+    resume_chars = min(len(a["resume_text"]), 12000)
+    est = gateway.estimate_cost(cfg, "standard", chars + resume_chars, 900, len(ids), cached_chars=resume_chars)
+    cap = float(os.getenv("AUTO_DEEP_MAX_USD", "0.50"))
+    if est is not None and est > cap:
+        res["auto_deep"] = {"status": "skipped", "done": 0, "total": len(ids), "estimate_usd": est,
+                            "reason": f"Estimated ${est:.2f} is above the auto-check cap (${cap:.2f}). Run it from the Jobs tab if you want it."}
+        await bus.publish(run_id, "deep.skipped", res["auto_deep"])
+        return
+    res["auto_deep"] = {"status": "running", "done": 0, "total": len(ids), "estimate_usd": est, "errors": []}
+    await bus.publish(run_id, "deep.progress", res["auto_deep"])
+    queue = list(ids)
+
+    async def worker() -> None:
+        while queue:
+            jid = queue.pop(0)
+            try:
+                await _deep_one(a, aid, full[jid], cfg, a.get("owner", ""), run_id)
+            except llm.LLMError as e:
+                res["auto_deep"]["errors"].append(str(e)[:200])
+                if e.status in (401, 403, 429):           # systemic: stop instead of hammering the provider
+                    queue.clear()
+            except Exception as e:
+                log.exception("auto deep check failed")
+                res["auto_deep"]["errors"].append(type(e).__name__)
+            res["auto_deep"]["done"] += 1
+            await bus.publish(run_id, "deep.progress", res["auto_deep"])
+    await asyncio.gather(worker(), worker())
+    computed = await run_in_threadpool(_compute, a, a["extra"], res["summary"]["threshold"])
+    res.update(computed)
+    res["auto_deep"]["status"] = "done"
+    await run_in_threadpool(_persist_analysis, aid, a)
+    await bus.publish(run_id, "deep.done", res["auto_deep"])
+
+
+@app.post("/api/analysis/{aid}/strategy")
+async def rebuild_strategy(aid: str, request: Request):
+    """(Re)build the AI apply strategy on demand."""
+    a = _analysis(aid)
+    cfg = llm.require(request.headers)
+    ratelimit.check(request, "ai")
+    res = a["result"]
+    res["strategy"] = await strategy.build(cfg, a["resume_text"], res["jobs"], res["summary"]["threshold"],
+                                           gateway.Call(agent="apply_strategy", owner=owner(request), analysis_id=aid))
+    await run_in_threadpool(_persist_analysis, aid, a)
+    return res["strategy"]
 
 
 # ---------- agents (ROADMAP §8, Phase 5) ----------
@@ -1262,7 +1377,7 @@ async def interview_answer(aid: str, job_id: str, body: PracticeAnswer, request:
 
 
 # ---------- Phase 6 routers ----------
-for _r in (accounts.router, tracker.router, watches.router, companies.router, market.router, ext.router, ops.router, evals.router):
+for _r in (accounts.router, tracker.router, watches.router, companies.router, market.router, ext.router, ops.router, evals.router, links.router):
     app.include_router(_r)
 
 
